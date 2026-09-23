@@ -55,6 +55,15 @@ export interface CandidaturaMunicipal {
   message: string;
   loaded: number;
   total: number;
+  /**
+   * Quantas cidades já têm resultado publicado — não quantas foram buscadas.
+   *
+   * A diferença importa e enganava: medido no simulado de 23/09/2026, a varredura do estadual de
+   * Minas dizia "853 de 853 cidades recebidas" enquanto só 16 delas tinham algum voto. Os outros
+   * 837 arquivos existem e vêm zerados. Quem abria a lista de uma candidatura via 169 de 3.057
+   * votos e não tinha como saber que o resto ainda não fora publicado pela fonte.
+   */
+  cidadesComResultado: number;
   numero: string;
   linhas: [string, string, number, number, number][];
 }
@@ -565,7 +574,7 @@ export class MunicipalService {
    */
   async porCandidatura(mode: Mode, uf: string, turn: Turn, office: Office, numero: string): Promise<CandidaturaMunicipal> {
     const bruto = await this.get(mode, uf, turn, office);
-    if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, numero, linhas: [] };
+    if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado: 0, numero, linhas: [] };
 
     const linhas: CandidaturaMunicipal['linhas'] = [];
     const indice = bruto.c.findIndex(([n]) => n === numero);
@@ -579,7 +588,8 @@ export class MunicipalService {
       }
       linhas.sort((a, b) => b[2] - a[2]);
     }
-    return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, numero, linhas };
+    const cidadesComResultado = bruto.m.reduce((t, [, , , vv]) => t + (vv > 0 ? 1 : 0), 0);
+    return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado, numero, linhas };
   }
 
   /**

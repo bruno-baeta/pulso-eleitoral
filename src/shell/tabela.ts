@@ -205,7 +205,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   const carregar = async () => {
     if (fechada) return;
     type Municipal = {
-      status: string; message?: string; loaded?: number; total?: number;
+      status: string; message?: string; loaded?: number; total?: number; cidadesComResultado?: number;
       /** [nome, uf, votos, válidos na cidade, colocação] — já filtrado e ordenado pelo servidor. */
       linhas: [string, string, number, number, number][];
     };
@@ -239,7 +239,16 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     estado.textContent = pronto || linhas.length ? ''
       : d.total ? `Carregando municípios · ${fmtInt(d.loaded ?? 0)} de ${fmtInt(d.total)}`
       : (d.message || 'Carregando municípios…');
-    parcial = !pronto && d.total ? `${fmtInt(d.loaded ?? 0)} de ${fmtInt(d.total)} cidades recebidas` : '';
+    /*
+     * O que interessa é quantas cidades já têm resultado, não quantas foram buscadas.
+     *
+     * A varredura chegava a "853 de 853 cidades recebidas" com só 16 delas publicadas pelo TSE, e
+     * a folha passava por completa mostrando 5% dos votos da candidatura.
+     */
+    const comResultado = d.cidadesComResultado ?? 0;
+    parcial = d.total && comResultado < d.total
+      ? `${fmtInt(comResultado)} de ${fmtInt(d.total)} cidades já publicadas pelo TSE`
+      : '';
 
     /*
      * A folha confere a própria soma contra o total da candidatura.
@@ -251,7 +260,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     const somado = linhas.reduce((t, r) => t + r.votos, 0);
     conferencia = !o.votos ? ''
       : somado >= o.votos ? `${fmtInt(somado)} votos em ${fmtInt(linhas.length)} cidades — a soma fecha com o total da candidatura`
-      : `${fmtInt(somado)} de ${fmtInt(o.votos)} votos localizados${pronto ? '' : ' — ainda chegando'}`;
+      : `${fmtInt(somado)} de ${fmtInt(o.votos)} votos localizados`;
     desenhar();
     if (!pronto) relogio = window.setTimeout(carregar, 2500);
   };

@@ -110,8 +110,8 @@ export const CSS = `
    * Fica discreto: quem assiste de longe le o painel, e este botao e para quem chegou perto e quer
    * a repartição por partido. O margin-right auto empurra o apurado de volta para a direita.
    */
-  .noite .cads { all: unset; cursor: pointer; margin-right: auto; margin-left: .7vw;
-    padding: .2vh .55vw; border: 1px solid #2c312e; border-radius: 3px;
+  .noite .cads { all: unset; cursor: pointer; margin-right: auto; margin-left: 0;
+    padding: .2vh .45vw; border: 1px solid #2c312e; border-radius: 3px;
     font-size: clamp(9px, .72vw, 14px); letter-spacing: .1em; text-transform: uppercase;
     color: #9aa3ab; white-space: nowrap; }
   .noite .cads:hover, .noite .cads:focus-visible { color: #f6f3ec; border-color: #4a534e; }
