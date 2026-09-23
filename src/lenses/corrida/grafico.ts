@@ -19,6 +19,7 @@ import { colorOf } from './cores';
 import { Chime } from './som';
 import { abrirCandidato, abrirTabela } from './fichas';
 import { escalaY } from './escala';
+import { escalaConteudo, estreita } from '../../shell/escala';
 import { mountShellBar, mountShellNote, pageReady } from '../../shell/shell';
 import { all, contestedSeats, el, esc, fmtInt, fmtPercent, fmtShortTime, fold, initials, loadSnapshot, loadTimeline, MODE, party, photoUrl, seatsByParty, shortVotes, stateName, titleCase, TURN, UF, YEAR } from '../../shell/dados';
 
@@ -659,8 +660,8 @@ async function main() {
   const layout = () => {
     let changed = false; let overtakes = 0;
     const W = innerWidth, H = innerHeight;
-    const mobile = W < 900 || W / H < 1;
-    const k = mobile ? W / 600 : Math.min(W / 3440, H / 1440);
+    const mobile = estreita(W, H);
+    const k = escalaConteudo(W, H);
     app.classList.toggle('mobile', mobile);
     shellBar.classList.toggle('mobile', mobile);
     app.style.setProperty('--k', String(k));

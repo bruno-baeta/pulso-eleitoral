@@ -11,8 +11,11 @@ import '@fontsource-variable/dm-sans/wght.css';
 import '@fontsource/barlow-condensed/500.css';
 import '@fontsource/barlow-condensed/600.css';
 import '@fontsource/barlow-condensed/700.css';
-import { COLORS, STATES, partyColor, partySlot, type Office, type WireRace as Race, type Snapshot } from '../../../shared/types';
-import { MODE, TURN, UF, el, esc, fmtInt, fmtPercent, initials, loadSnapshot, party, photoUrl, shortVotes, stateName, titleCase } from '../../shell/dados';
+import { STATES, partyColor, type Office, type WireRace as Race, type Snapshot } from '../../../shared/types';
+import { ease, lerp, mapColors, mute, rgba } from './cores';
+import { achados, repartir } from './busca';
+import { escalaBase } from '../../shell/escala';
+import { MODE, TURN, UF, el, esc, fmtInt, fmtPercent, initials, loadSnapshot, onSnapshot, party, photoUrl, shortVotes, stateName, titleCase } from '../../shell/dados';
 import { mountPlayer } from '../../shell/player';
 import { HIT_CSS, hitInner, ROW_CSS, rowInner, seedScale } from '../../shell/row';
 import { mountShellBar, mountShellNote, pageReady } from '../../shell/shell';
@@ -41,42 +44,6 @@ const timings: { what: string; ms: number }[] = [];
 const timed = <T,>(what: string, fn: () => T): T => { const t0 = performance.now(); const r = fn(); timings.push({ what, ms: Math.round((performance.now() - t0) * 10) / 10 }); return r; };
 
 const pct = (x: number, d = 1) => fmtPercent(x * 100, d);
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', ''), n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-/** Party colour pulled toward grey, so it reads as ink rather than neon. */
-function mute(hex: string, amount = .3, light = 0): number[] {
-  const [r, g, b] = hexToRgb(hex), grey = (r + g + b) / 3;
-  const m = (c: number) => { const v = c + (grey - c) * amount; return Math.round(v + (light > 0 ? (255 - v) * light : v * light)); };
-  return [m(r), m(g), m(b)];
-}
-const rgba = (c: ArrayLike<number>, a: number) => `rgba(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])},${Math.round(a * 1000) / 1000})`;
-const ease = (t: number) => t <= 0 ? 0 : t >= 1 ? 1 : t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-/** Slot pairs too close on the dark surface (same list as shared/types' distinctColors). */
-const CLASH = new Set(['0-6', '1-3', '1-4', '1-5', '1-7', '2-4', '2-5', '3-7', '4-7']);
-const clash = (a: number, b: number) => CLASH.has(a < b ? `${a}-${b}` : `${b}-${a}`);
-/**
- * Colours for a map legend: PT red and PL blue stay put; every other party keeps its slot unless it is taken
- * or too close to ANY colour already on the map (not only the previous one), since winners sit side by side.
- */
-function mapColors(parties: string[]): string[] {
-  const used: number[] = [];
-  return parties.map(p => {
-    const key = p.toUpperCase().replace(/[^A-Z]/g, '');
-    const reserved = key === 'PT' ? 7 : key === 'PL' ? 0 : -1;
-    let slot = reserved >= 0 && !used.includes(reserved) ? reserved : -1;
-    if (slot < 0) {
-      const wanted = partySlot(key), options = [1, 2, 3, 4, 5, 6];
-      const start = Math.max(0, options.indexOf(wanted));
-      const ring = options.map((_, i) => options[(start + i) % options.length]);
-      slot = ring.find(o => !used.includes(o) && used.every(u => !clash(u, o))) ?? ring.find(o => !used.includes(o)) ?? wanted;
-    }
-    used.push(slot);
-    return COLORS[slot];
-  });
-}
 
 async function main() {
   const app = document.getElementById('app')!;
@@ -254,7 +221,7 @@ async function main() {
 
   function layout() {
     W = stage.clientWidth; H = stage.clientHeight; mobile = innerWidth <= 900;
-    k = mobile ? .5 : Math.min(innerWidth / 3440, innerHeight / 1440);
+    k = mobile ? .5 : escalaBase();
     for (const e of [app, tip, pin, shellBar]) e.style.setProperty('--k', String(k));
     dpr = Math.min(devicePixelRatio || 1, 2);
     for (const c of [cBase, cLines, cTop]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
@@ -380,15 +347,32 @@ async function main() {
     if (prevScope !== o.scope || instant) setView(city ? cityView(city) : scopeView(), instant);
   }
 
-  /** Candidate names, colours, photos and status come with the app snapshot; refreshed with the source. */
+  /**
+   * Os nomes, cores, fotos e situação vêm do snapshot do aplicativo.
+   *
+   * Duas fontes alimentam isto, e elas se complementam: o fluxo de eventos avisa no instante em
+   * que o servidor aceita um arquivo novo — é o que faz o mapa mudar junto com os painéis das
+   * outras telas, em vez de até quinze segundos depois —, e o relógio abaixo fica como rede para
+   * quando o fluxo cai. Reaproveitar a leitura que o fluxo acabou de entregar não custa requisição
+   * nenhuma.
+   */
+  const adotar = (next: Snapshot) => {
+    const mudou = !snap
+      || Object.keys(next.races).join() !== Object.keys(snap.races).join()
+      || JSON.stringify(Object.values(next.races).map(r => r?.generationId)) !== JSON.stringify(Object.values(snap.races).map(r => r?.generationId));
+    snap = next;
+    if (!mudou) return;
+    raceIndex = new Map(); candCache = new Map(); paletteCache.clear();
+    if (sel) sel = candAt(office, sel.idx);
+    indexDirty = true;
+    render(true);
+  };
+
+  onSnapshot(s => { if (player?.rp.live !== false) adotar(s); });
+
   async function refreshSnapshot() {
     if (player?.rp.live === false) { setTimeout(() => void refreshSnapshot(), 4000); return; }
-    try {
-      const next = await loadSnapshot();
-      const changed = !snap || Object.keys(next.races).join() !== Object.keys(snap.races).join() || JSON.stringify(Object.values(next.races).map(r => r?.generationId)) !== JSON.stringify(Object.values(snap.races).map(r => r?.generationId));
-      snap = next;
-      if (changed) { raceIndex = new Map(); candCache = new Map(); paletteCache.clear(); if (sel) sel = candAt(office, sel.idx); indexDirty = true; render(true); }
-    } catch { /* keep the last snapshot */ }
+    try { adotar(await loadSnapshot()); } catch { /* keep the last snapshot */ }
     const complete = snap && OFFICES.filter(hasTurn).every(o => snap!.races[o.key]);
     if (LIVE || !complete) setTimeout(() => void refreshSnapshot(), LIVE ? 15_000 : 4000);
   }
@@ -609,15 +593,14 @@ async function main() {
     const q = fold(input.value);
     if (!q) { sugg.hidden = true; return; }
     if (indexDirty) buildIndex();
-    const where = (f: string) => { const i = f.indexOf(q); return i < 0 ? -1 : i === 0 ? 0 : f[i - 1] === ' ' ? 1 : 2; };
-    const cands: { h: Hit; w: number; v: number }[] = [];
-    for (const c of candIndex) { const w = where(c.f); if (w >= 0) cands.push({ h: { kind: 'cand', ...c }, w, v: c.votes }); }
-    cands.sort((a, b) => a.w - b.w || b.v - a.v);
-    const cities: { h: Hit; w: number; v: number }[] = [];
-    for (const c of data.cities) { const w = where(c.f); if (w >= 0) cities.push({ h: { kind: 'city', c }, w, v: c.vv }); }
-    cities.sort((a, b) => a.w - b.w || b.v - a.v);
-    const nc = Math.min(cands.length, cities.length ? 4 : 8);
-    hits = [...cands.slice(0, nc), ...cities.slice(0, 8 - nc)].map(x => x.h); active = 0;
+    const cands = achados(candIndex, q, c => ({ texto: c.f, peso: c.votes }));
+    const cities = achados(data.cities, q, c => ({ texto: c.f, peso: c.vv }));
+    const [nc, nm] = repartir(cands.length, cities.length);
+    hits = [
+      ...cands.slice(0, nc).map(({ item }): Hit => ({ kind: 'cand', ...item })),
+      ...cities.slice(0, nm).map(({ item }): Hit => ({ kind: 'city', c: item })),
+    ];
+    active = 0;
     const mark = (name: string) => { const f = fold(name), i = f.indexOf(q); return i < 0 || f.length !== name.length ? esc(name) : `${esc(name.slice(0, i))}<mark>${esc(name.slice(i, i + q.length))}</mark>${esc(name.slice(i + q.length))}`; };
     sugg.innerHTML = hits.length ? hits.map((h, i) => h.kind === 'city'
       ? `<button class="sres ${i === active ? 'on' : ''}" data-i="${i}">${hitInner({

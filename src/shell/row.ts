@@ -41,6 +41,7 @@ export interface RowParts {
 }
 
 import { esc } from '../domain/format';
+import { escalaConteudo } from './escala';
 
 /** The inner markup of a line. The caller owns the element and gives it the class `crow`. */
 export function rowInner(p: RowParts): string {
@@ -73,11 +74,7 @@ const px = (n: number, min: number) => `max(calc(${n}px * var(--k)), ${min}px)`;
  * search lens filling the screen for a second. This puts a sane value on the page immediately.
  */
 export function seedScale() {
-  const apply = () => {
-    const w = innerWidth, h = innerHeight;
-    const k = w < 900 || w / h < 1 ? w / 600 : Math.min(w / 3440, h / 1440);
-    document.documentElement.style.setProperty('--k', String(k));
-  };
+  const apply = () => document.documentElement.style.setProperty('--k', String(escalaConteudo()));
   apply();
   addEventListener('resize', apply);
 }

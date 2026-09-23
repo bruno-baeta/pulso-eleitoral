@@ -4,6 +4,7 @@ import { assemblySeats, CHAMBER_SEATS } from '../src/domain/seats.ts';
 import { fmtInt, fmtPercent, fmtPoints, fmtSigned, titleCase, fold } from '../src/domain/format.ts';
 import { candidateStatus, contestedSeats, publishedStatus, rankCandidates, seatsByParty } from '../src/domain/derive.ts';
 import { escalaY } from '../src/lenses/corrida/escala.ts';
+import { achados, onde, repartir } from '../src/lenses/territorio/busca.ts';
 import type { Race } from '../shared/types.ts';
 
 const race = (over: Partial<Race> = {}): Race => ({
@@ -90,4 +91,26 @@ test('escala do eixo: teto com folga e rótulos em números redondos', () => {
   assert.equal(miudo.passo, 1);
   assert.equal(miudo.teto, 2);
   assert.ok(escalaY(0, false).teto > 0, 'sem voto nenhum, o eixo ainda existe');
+});
+
+test('busca do Território: começo do nome ganha do meio, e votos desempatam', () => {
+  const nomes = [
+    { f: 'alexandre silveira', votos: 3_679_392 },
+    { f: 'silveiras', votos: 5_000 },
+    { f: 'marcos da silveira', votos: 900_000 },
+    { f: 'zema', votos: 6_094_136 },
+  ];
+  const ordem = achados(nomes, 'silveira', n => ({ texto: n.f, peso: n.votos })).map(a => a.item.f);
+  assert.deepEqual(ordem, ['silveiras', 'alexandre silveira', 'marcos da silveira']);
+  assert.equal(onde('zema', 'silveira'), -1, 'quem não bate fica de fora');
+  assert.equal(onde('alexandre silveira', 'alex'), 0);
+  assert.equal(onde('alexandre silveira', 'silv'), 1, 'começo de palavra vale mais que meio');
+  assert.equal(onde('alexandre silveira', 'lex'), 2);
+});
+
+test('busca do Território: candidaturas não somem debaixo de uma enxurrada de cidades', () => {
+  assert.deepEqual(repartir(30, 120), [4, 4], 'havendo os dois, quatro lugares para cada');
+  assert.deepEqual(repartir(30, 0), [8, 0], 'só candidaturas, as oito são delas');
+  assert.deepEqual(repartir(0, 30), [0, 8]);
+  assert.deepEqual(repartir(2, 30), [2, 6], 'o que um não usa, o outro aproveita');
 });

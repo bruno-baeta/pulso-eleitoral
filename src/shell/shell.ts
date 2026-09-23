@@ -8,6 +8,7 @@
 import { STATES, type Turn } from '../../shared/types';
 import { SIMULADO_WINDOWS, describeWindow, nextWindow, openWindow } from '../../shared/windows';
 import { fmtShortTime } from '../domain/format';
+import { escalaMoldura } from './escala';
 import { MODE, TURN, UF, esc, navigate, type Mode } from './dados';
 
 export type LensKey = 'corrida' | 'territorio' | 'tv';
@@ -343,7 +344,7 @@ export function mountShellCss() {
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);
-  const k = () => document.documentElement.style.setProperty('--sk', String(Math.max(.5, Math.min(innerWidth / 3440, innerHeight / 1440))));
+  const k = () => document.documentElement.style.setProperty('--sk', String(escalaMoldura()));
   k(); addEventListener('resize', k);
   armReady();
 }
