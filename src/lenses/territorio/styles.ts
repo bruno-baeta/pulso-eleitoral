@@ -81,15 +81,18 @@ export const CSS = `
        cabecalho e so a ultima linha aparecia. Sem crase neste comentario: ela fecharia o literal. */
     top: calc(var(--sh-head, 0px) + 26px * var(--k)); z-index: 3; pointer-events: none; }
   .soma:empty { display: none; }
-  .soma-t { font-size: max(calc(15px * var(--k)), 12px); color: #85827b; margin-bottom: calc(10px * var(--k)); }
+  /* Estes numeros sao a conferencia da apuracao, e competem em tamanho com a legenda ao lado
+     (17px) e com o mapa. Na primeira versao ficaram menores que a legenda e se liam como nota de
+     rodape; aqui eles tem o corpo de quem e para ser lido de longe, na TV. */
+  .soma-t { font-size: max(calc(20px * var(--k)), 15px); color: #85827b; margin-bottom: calc(14px * var(--k)); }
   .soma-t b { color: #e8e4dc; font-variant-numeric: tabular-nums; }
-  .soma dl { display: flex; flex-wrap: wrap; gap: calc(10px * var(--k)) calc(26px * var(--k)); margin: 0; }
-  .soma dl > div { display: flex; flex-direction: column; gap: calc(2px * var(--k)); }
-  .soma dt { font-size: max(calc(14px * var(--k)), 11px); color: #6a6863; }
+  .soma dl { display: flex; flex-wrap: wrap; gap: calc(14px * var(--k)) calc(34px * var(--k)); margin: 0; }
+  .soma dl > div { display: flex; flex-direction: column; gap: calc(4px * var(--k)); }
+  .soma dt { font-size: max(calc(17px * var(--k)), 13px); color: #6a6863; }
   .soma dd { margin: 0; font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
-    font-size: max(calc(30px * var(--k)), 20px); color: #e8e4dc; font-variant-numeric: tabular-nums; line-height: 1.05; }
+    font-size: max(calc(44px * var(--k)), 28px); color: #e8e4dc; font-variant-numeric: tabular-nums; line-height: 1.05; }
   .soma .ap dd { color: #e8c877; }
-  .soma-p { margin-top: calc(9px * var(--k)); font-size: max(calc(14px * var(--k)), 11px); color: #5c605b; }
+  .soma-p { margin-top: calc(12px * var(--k)); font-size: max(calc(16px * var(--k)), 12px); color: #5c605b; }
 
   .legend { position: absolute; left: calc(72px * var(--k)); bottom: calc(var(--pl-h, 0px) + 14px * var(--k)); z-index: 3; font-size: max(calc(17px * var(--k)), 13px); color: #a3a099; pointer-events: none; }
   .legend > div { display: flex; flex-direction: column; gap: calc(8px * var(--k)); width: calc(380px * var(--k)); }

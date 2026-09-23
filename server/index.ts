@@ -138,11 +138,12 @@ app.get<{ Querystring: Query & { office: Office; scope?: string } }>('/api/serie
  * do not read events and would pay for them in every poll. The state's own races and the national
  * ones are merged here, which is how a reader thinks about the night.
  */
-app.get<{ Querystring: Query & { limit?: number; abrangencia?: 'br' | 'uf' } }>('/api/feed', { schema: { querystring: { type: 'object', properties: { ...querySchema.properties, limit: { type: 'integer', minimum: 1, maximum: 200 }, abrangencia: { type: 'string', enum: ['br', 'uf'] } }, additionalProperties: false } } }, async (request, reply) => {
+app.get<{ Querystring: Query & { limit?: number; abrangencia?: 'br' | 'uf'; at?: number } }>('/api/feed', { schema: { querystring: { type: 'object', properties: { ...querySchema.properties, limit: { type: 'integer', minimum: 1, maximum: 200 }, abrangencia: { type: 'string', enum: ['br', 'uf'] }, at: { type: 'integer', minimum: 0 } }, additionalProperties: false } } }, async (request, reply) => {
   reply.header('Cache-Control', 'no-store');
-  const { mode, uf, turn, limit, abrangencia } = request.query;
+  const { mode, uf, turn, limit, abrangencia, at } = request.query;
   collector.touch(mode, uf, turn);
-  return { events: collector.feed(mode, uf, turn, limit ?? 120, abrangencia ?? 'br') };
+  // `at` é o instante que a tela está reproduzindo: o fio tem de parar onde o painel parou.
+  return { events: collector.feed(mode, uf, turn, limit ?? 120, abrangencia ?? 'br', at) };
 });
 app.get<{ Querystring: Query }>('/api/timeline', { schema: { querystring: querySchema } }, async (request, reply) => {
   reply.header('Cache-Control', 'no-store');

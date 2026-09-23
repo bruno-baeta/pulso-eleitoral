@@ -527,7 +527,14 @@ export class Collector {
    * mesma, que é o defeito que este fio já resolveu uma vez, agora vinte e sete vezes maior. De
    * fora passam só virada, eleito e fim de totalização: são raros, e é por isso que valem a linha.
    */
-  feed(mode: Mode, uf: string, turn: Turn, limit = 120, abrangencia: 'br' | 'uf' = 'br'): FeedEvent[] {
+  /**
+   * O que aconteceu, em frases, até `ate` — e não até agora.
+   *
+   * Sem esse corte o rodapé da TV anunciava "eleito … a 100% apurado" com o painel reproduzindo as
+   * 14h e 0,0% apurado. Duas horas de apuração na mesma tela, e a mais adiantada era a que dizia
+   * quem ganhou: a reprodução deixava de ser reprodução.
+   */
+  feed(mode: Mode, uf: string, turn: Turn, limit = 120, abrangencia: 'br' | 'uf' = 'br', ate?: number): FeedEvent[] {
     const proprias = new Set([uf, 'BR']);
     const RAROS = new Set<FeedEvent['kind']>(['lead', 'elected', 'finished']);
     const chaves = abrangencia === 'uf'
@@ -536,6 +543,7 @@ export class Collector {
     return chaves
       .flatMap(k => this.events.get(k) ?? [])
       .filter(e => proprias.has(e.uf ?? 'BR') || RAROS.has(e.kind))
+      .filter(e => ate === undefined || e.at <= ate)
       .sort((a, b) => b.at - a.at)
       .slice(0, limit);
   }

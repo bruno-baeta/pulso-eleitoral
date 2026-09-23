@@ -43,6 +43,8 @@ const CADEIRAS: { key: Office; nome: string }[] = [
 ];
 
 let snap: Snapshot | null = null;
+/** O instante que o painel está reproduzindo; nulo é o ao vivo. */
+let momento: number | null = null;
 
 /*
  * O que mudou desde a última atualização, por candidatura.
@@ -504,7 +506,13 @@ async function main() {
         : 'Aguardando o TSE';
       secao.querySelector('.corpo')!.innerHTML = cadeiras(key, race);
     }
-    palco.querySelector('.rel')!.textContent = new Date().toLocaleTimeString('pt-BR', {
+    /*
+     * O relógio do painel é o do instante no ar, não o da parede.
+     *
+     * Reproduzindo as 14h ele marcava 16:36, e o painel passava a dizer duas horas ao mesmo tempo.
+     * `momento` é nulo no ao vivo, que é quando a hora da parede é mesmo a hora da apuração.
+     */
+    palco.querySelector('.rel')!.textContent = new Date(momento ?? Date.now()).toLocaleTimeString('pt-BR', {
       timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit',
     });
     animarTrocas(antes);
@@ -515,13 +523,17 @@ async function main() {
    * não precisa interpretar três gráficos para saber que houve uma virada.
    */
   const VALE = new Set(['lead', 'elected', 'finished', 'milestone']);
-  const lerFio = async () => {
+  const lerFio = async (at?: number) => {
     try {
-      const r = await fetch(`/api/feed?mode=${MODE}&uf=${UF}&turn=${TURN}&limit=30`, { cache: 'no-store' });
+      // O fio para onde o painel parou. Sem isto ele anunciava "eleito … a 100% apurado" enquanto
+      // a reprodução mostrava as 14h e nenhum voto publicado.
+      const r = await fetch(`/api/feed?mode=${MODE}&uf=${UF}&turn=${TURN}&limit=30${at === undefined ? '' : `&at=${Math.round(at)}`}`, { cache: 'no-store' });
       if (!r.ok) return;
       const { events } = await r.json() as { events: { kind: string; title: string; detail: string }[] };
       const linhas = events.filter(e => VALE.has(e.kind)).slice(0, 8);
-      if (!linhas.length) return;
+      // Reproduzindo um instante em que nada tinha acontecido ainda, o rodapé fica vazio — manter
+      // o que estava lá seria de novo pôr o futuro na tela.
+      if (!linhas.length) { palco.querySelector('.tira')!.innerHTML = ''; return; }
       const corpo = linhas.map(e =>
         `<span class="it k-${e.kind}"><b>${esc(e.title)}</b> ${esc(e.detail)}</span>`).join('');
       // escrito duas vezes para o laço fechar sem emenda
@@ -538,6 +550,14 @@ async function main() {
    * e somar os pares de cada uma.
    */
   const lerPresidenciaNoEstado = async () => {
+    /*
+     * O mapa municipal não é gravado instante a instante: o TSE serve o estado de agora, e só.
+     *
+     * Reproduzindo as 14h, somar os municípios daria a apuração inteira no painel de um momento em
+     * que nada tinha sido publicado. Na reprodução essa soma some — melhor um campo vazio que um
+     * número de outra hora.
+     */
+    if (momento !== null) { presidenteNoEstado = []; return; }
     try {
       const r = await fetch(`/api/municipal?mode=${MODE}&uf=${UF}&turn=${TURN}&office=president`, { cache: 'no-store' });
       if (!r.ok) return;
@@ -706,7 +726,13 @@ async function main() {
 
   const transporte = montarTransporte({
     elemento: palco.querySelector<HTMLElement>('.fita')!,
-    mostrar: async at => { snap = await loadSnapshot(at); desenhar(); },
+    mostrar: async at => {
+      momento = at ?? null;
+      snap = await loadSnapshot(at);
+      await lerPresidenciaNoEstado();
+      desenhar();
+      void lerFio(at);
+    },
     visivel,
   });
   const aoVivo = () => transporte.aoVivo();
@@ -722,12 +748,13 @@ async function main() {
     if (!aoVivo() || !visivel()) return;
     void loadSnapshot().then(s => { snap = s; desenhar(); }).catch(() => {});
   }, 15_000);
-  setInterval(() => { if (visivel()) void lerFio(); }, 12_000);
-  setInterval(() => { if (visivel()) void lerPresidenciaNoEstado().then(desenhar); }, 20_000);
+  setInterval(() => { if (visivel() && aoVivo()) void lerFio(); }, 12_000);
+  setInterval(() => { if (visivel() && aoVivo()) void lerPresidenciaNoEstado().then(desenhar); }, 20_000);
   document.addEventListener('visibilitychange', () => {
     if (!visivel() || !aoVivo()) return;
     void loadSnapshot().then(s => { snap = s; desenhar(); }).catch(() => {});
     void lerFio();
+
   });
 
   pageReady();
