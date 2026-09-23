@@ -42,11 +42,24 @@ export interface MunicipalPayload {
   loaded: number; total: number; version: number; sourceAt: string | null;
   /** Municipal files requested for this view since the server started (live delta diagnostics). */
   fetches?: number;
+  totais: TotaisMunicipais;
   c: [string, number][];
   /** [ibge, name, uf, valid, pairs, lastTotalizationTime?] — the time (hh:mm:ss) only for live sources. */
   m: [string, string, string, number, number[], string?][];
   n: Record<string, [string, string]>;
 }
+/**
+ * A soma das cidades publicadas, campo a campo, como o TSE os publica.
+ *
+ * Serve para conferir o total da disputa por outro caminho: ele vem de outro arquivo, por outra
+ * rota. `cidades` diz sobre quantas a soma foi feita — nem toda cidade publicada tem os totais
+ * guardados, e um percentual preciso sobre base parcial é pior que nenhum.
+ */
+export interface TotaisMunicipais {
+  cidades: number; nominais: number; brancos: number; nulos: number;
+  total: number; secoes: number; secoesTotais: number;
+}
+
 export type MunicipalResponse = MunicipalPayload | ({ unchanged: true } & Pick<MunicipalPayload, 'status' | 'message' | 'loaded' | 'total' | 'version'>);
 
 /** O que a folha de cidades desenha, e nada mais: [nome, uf, votos, válidos na cidade, colocação]. */
@@ -64,12 +77,25 @@ export interface CandidaturaMunicipal {
    * votos e não tinha como saber que o resto ainda não fora publicado pela fonte.
    */
   cidadesComResultado: number;
+  /**
+   * A soma das cidades publicadas, campo a campo, como o TSE os publica.
+   *
+   * Serve para conferir o total da disputa por outro caminho: se o painel diz 50% apurado e as
+   * seções somadas das cidades dizem outra coisa, a diferença é visível em vez de suposta.
+   */
+  totais: TotaisMunicipais;
   numero: string;
   linhas: [string, string, number, number, number][];
 }
 
 interface MunRef { uf: string; cd: string; cdi: string; nm: string; capital: boolean }
-interface Row { vv: number; cand: [string, number][] }
+/**
+ * Uma cidade: os votos por candidatura e os totais que o TSE publica junto.
+ *
+ * `vb`, `vn`, `tv`, `st` e `ts` são campos do próprio arquivo municipal, não contas nossas — é o
+ * que permite somar as cidades e conferir o total da disputa por outro caminho.
+ */
+interface Row { vv: number; cand: [string, number][]; vb?: number; vn?: number; tv?: number; st?: number; ts?: number }
 interface Job {
   key: string; mode: Mode; turn: Turn; office: Office; area: string; focus: string;
   status: MunicipalPayload['status']; message: string;
@@ -87,6 +113,16 @@ interface Job {
   stamps: Map<string, AbCity>; fetched: Map<string, string>; abSeen: Set<string>; abRotation: number; fetches: number;
   /** Versão já gravada em disco, e quando — o que evita reescrever um megabyte a cada volta. */
   salvo: { version: number; em: number };
+  /**
+   * A fonte já confirmou estas linhas nesta execução?
+   *
+   * Linha vinda do disco preenche `rows` e faria o job passar por completo — e um job completo
+   * some da fila de varredura, então ele nunca mais perguntava nada e servia o retrato de uma hora
+   * atrás como atual. Visto no simulado de 23/09/2026: senado e deputado federal com 853 linhas,
+   * `fetches=0` e apenas 12 e 74 cidades com voto, enquanto governador e estadual, que varreram de
+   * verdade, tinham 423 e 431.
+   */
+  confirmado: boolean;
   body?: { version: number; namesAt: number; payload: MunicipalPayload };
 }
 
@@ -134,7 +170,12 @@ export function parseMunicipal(raw: unknown, expected: { election: string; cd: s
   } else throw new Error('Estrutura municipal não reconhecida');
   cand = cand.filter(([n, v]) => n && v > 0).sort((a, b) => b[1] - a[1]);
   if (!vv) vv = cand.reduce((s, [, v]) => s + v, 0);
-  return { vv, cand, sourceAt: tseTime(root.dg, root.hg) };
+  const totais = object(root.v), secoes = object(root.s);
+  return {
+    vv, cand, sourceAt: tseTime(root.dg, root.hg),
+    vb: numeric(totais.vb), vn: numeric(totais.vn), tv: numeric(totais.tv),
+    st: numeric(secoes.st), ts: numeric(secoes.ts),
+  };
 }
 
 /**
@@ -196,7 +237,7 @@ export class MunicipalService {
 
   async get(mode: Mode, uf: string, turn: Turn, office: Office, since?: number): Promise<MunicipalResponse> {
     const area = this.area(office, uf);
-    const base = { mode, uf, turn, office, area, sourceAt: null, c: [], m: [], n: {}, loaded: 0, total: 0, version: 0 };
+    const base = { mode, uf, turn, office, area, sourceAt: null, c: [], m: [], n: {}, loaded: 0, total: 0, version: 0, totais: this.somar(undefined) };
     if (!municipalOffices(turn).includes(office)) return { ...base, status: 'unavailable', message: 'Sem 2º turno para este cargo.' };
     if (mode === 'historico' && turn === 2 && office === 'governor' && !(ARCHIVE.runoffStates as readonly string[]).includes(uf)) {
       return { ...base, status: 'unavailable', message: `Não houve 2º turno para governador neste estado em ${ARCHIVE.year}.` };
@@ -204,7 +245,7 @@ export class MunicipalService {
     const key = `${mode}:${turn}:${area}:${office}`;
     let job = this.jobs.get(key);
     if (!job) {
-      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 } };
+      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
       this.jobs.set(key, job);
       await this.loadBuilt(job);
     }
@@ -238,7 +279,7 @@ export class MunicipalService {
       const key = `${mode}:${turn}:${area}:${office}`;
       let job = this.jobs.get(key);
       if (!job) {
-        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 } };
+        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
         this.jobs.set(key, job);
         void this.loadBuilt(job).then(() => { if (!job!.running && job!.status !== 'ready') void this.run(job!); });
         continue;
@@ -330,7 +371,7 @@ export class MunicipalService {
           const key = `historico:${turn}:${area}:${office}`;
           let job = this.jobs.get(key);
           if (!job) {
-            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 } };
+            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
             this.jobs.set(key, job);
             await this.loadBuilt(job);
           }
@@ -358,6 +399,22 @@ export class MunicipalService {
     const bruto = this.rawConfigs.get(alvo.configUrl);
     if (bruto === undefined) return null;
     return readConfig(bruto, job.area).length > 0;
+  }
+
+  /** Soma as cidades que têm os totais guardados. Cidade sem eles fica de fora, e a contagem diz. */
+  private somar(job: Job | undefined): TotaisMunicipais {
+    const t: TotaisMunicipais = { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0 };
+    for (const linha of job?.rows.values() ?? []) {
+      if (linha.vv <= 0 || !linha.ts) continue;
+      t.cidades++;
+      t.nominais += linha.vv;
+      t.brancos += linha.vb ?? 0;
+      t.nulos += linha.vn ?? 0;
+      t.total += linha.tv ?? 0;
+      t.secoes += linha.st ?? 0;
+      t.secoesTotais += linha.ts ?? 0;
+    }
+    return t;
   }
 
   private payload(job: Job, uf: string): MunicipalPayload {
@@ -393,7 +450,7 @@ export class MunicipalService {
     const n: MunicipalPayload['n'] = {};
     if (race) for (const cand of race.candidates) if (totals.has(cand.number)) n[cand.number] = [cand.name, cand.party];
     const payload: MunicipalPayload = {
-      mode: job.mode, uf, turn: job.turn, office: job.office, area: job.area, status, message,
+      mode: job.mode, uf, turn: job.turn, office: job.office, area: job.area, status, message, totais: this.somar(job),
       loaded: job.muns.length ? Math.min(job.rows.size, job.muns.length) : 0, total: job.muns.length, version: job.version, sourceAt: job.sourceAt, fetches: job.fetches, c, m, n,
     };
     job.body = { version: job.version, namesAt, payload };
@@ -431,18 +488,23 @@ export class MunicipalService {
     for (const path of [this.builtPath(job), legacy]) {
       if (!path) continue;
       try {
-        const file = JSON.parse(await readFile(path, 'utf8')) as { c: [string, number][]; m: [string, string, string, number, number[]][] };
+        const file = JSON.parse(await readFile(path, 'utf8')) as { c: [string, number][]; m: [string, string, string, number, number[]][]; t?: number[][] };
         job.muns = file.m.map(([cdi, nm, uf]) => ({ cdi, nm, uf, cd: '', capital: false }));
-        for (const [cdi, , , vv, pairs] of file.m) {
+        file.m.forEach(([cdi, , , vv, pairs], i) => {
           const cand: [string, number][] = [];
-          for (let i = 0; i < pairs.length; i += 2) cand.push([file.c[pairs[i]][0], pairs[i + 1]]);
+          for (let k = 0; k < pairs.length; k += 2) cand.push([file.c[pairs[k]][0], pairs[k + 1]]);
           // who won a city is read off the head of this list, so it is sorted here rather than
           // trusted from the file: a build written in the wrong order would invert a result
           cand.sort((a, b) => b[1] - a[1]);
-          job.rows.set(cdi, { vv, cand });
-        }
+          // `t` só existe nos arquivos gravados depois que os totais por cidade passaram a ser
+          // guardados; sem ele a cidade entra sem eles, e a conferência aparece incompleta.
+          const [vb, vn, tv, st, ts] = file.t?.[i] ?? [];
+          job.rows.set(cdi, { vv, cand, vb, vn, tv, st, ts });
+        });
         job.version = 1;
         job.salvo = { version: job.version, em: Date.now() };
+        // Disco não é confirmação: para o ao vivo, isto é ponto de partida até a fonte responder.
+        job.confirmado = job.mode === 'historico';
         if (job.mode === 'historico') { job.status = 'ready'; job.message = `Resultado final de ${ARCHIVE.year} por município.`; }
         // Ao vivo o número continua andando: o que veio do disco é ponto de partida, e quem decide
         // se está completo é o laço, comparando com a lista de municípios da fonte.
@@ -455,8 +517,17 @@ export class MunicipalService {
   private async saveBuilt(job: Job) {
     const payload = this.payload(job, job.focus);
     const path = this.builtPath(job);
+    /*
+     * `t` guarda os totais que o TSE publica por cidade — brancos, nulos, total e seções.
+     * Sem ele, cada reinício apagava esses campos e eles só voltavam se a cidade fosse rebuscada;
+     * a conferência da apuração pelas cidades ficava zerada sem explicação.
+     */
+    const totais = payload.m.map(([cdi]) => {
+      const r = job.rows.get(cdi);
+      return [r?.vb ?? 0, r?.vn ?? 0, r?.tv ?? 0, r?.st ?? 0, r?.ts ?? 0];
+    });
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(`${path}.tmp`, JSON.stringify({ c: payload.c, m: payload.m }));
+    await writeFile(`${path}.tmp`, JSON.stringify({ c: payload.c, m: payload.m, t: totais }));
     await rename(`${path}.tmp`, path);
     job.salvo = { version: job.version, em: Date.now() };
   }
@@ -536,7 +607,16 @@ export class MunicipalService {
           if (job.rows.size < job.muns.length) { job.status = 'loading'; job.message = 'Recebendo os resultados por município.'; }
           const delta = await this.delta(job, target);
           if (!delta) await this.pass(job, target);
-          job.status = job.rows.size >= job.muns.length ? 'ready' : 'loading';
+          /*
+           * Confirmado quando a fonte respondeu alguma coisa para este job nesta execução.
+           *
+           * "Respondeu" é ter buscado alguma cidade ou ter lido o andamento de alguma UF. Olhar o
+           * retorno de `delta` não serve: ele devolve 'idle' também quando o andamento veio do
+           * cache e nenhuma cidade foi considerada — foi assim que o senado se declarou pronto com
+           * `fetches=0`, servindo o que tinha vindo do disco.
+           */
+          if (job.fetches > 0 || job.abSeen.size > 0) job.confirmado = true;
+          job.status = job.confirmado && job.rows.size >= job.muns.length ? 'ready' : 'loading';
           job.message = job.status === 'ready' ? 'Resultados por município recebidos do TSE.' : 'Recebendo os resultados por município.';
           await this.talvezSalvar(job, job.status === 'ready');
           await this.pausa(delta === 'idle' ? 3000 : delta ? 500 : 5000);
@@ -574,7 +654,7 @@ export class MunicipalService {
    */
   async porCandidatura(mode: Mode, uf: string, turn: Turn, office: Office, numero: string): Promise<CandidaturaMunicipal> {
     const bruto = await this.get(mode, uf, turn, office);
-    if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado: 0, numero, linhas: [] };
+    if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado: 0, totais: { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0 }, numero, linhas: [] };
 
     /*
      * Cidade que já publicou e não deu voto nenhum também entra, com zero.
@@ -602,7 +682,14 @@ export class MunicipalService {
     }
     linhas.sort((a, b) => b[2] - a[2] || a[0].localeCompare(b[0], 'pt-BR'));
     const cidadesComResultado = bruto.m.reduce((t, [, , , vv]) => t + (vv > 0 ? 1 : 0), 0);
-    return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado, numero, linhas };
+
+    /*
+     * A soma das cidades, campo a campo. Nenhum destes números é conta nossa: são os que o TSE
+     * publica em cada arquivo municipal, somados. É por isso que eles servem de conferência do
+     * total da disputa, que vem por outro arquivo e outro caminho.
+     */
+    const totais = this.somar(this.jobs.get(`${mode}:${turn}:${this.area(office, uf)}:${office}`));
+    return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado, totais, numero, linhas };
   }
 
   /**
@@ -623,7 +710,7 @@ export class MunicipalService {
     const agora = Date.now();
     const vivos = [...this.jobs.values()].filter(j => agora - j.lastRequest <= KEEPALIVE);
     if (!vivos.length) return true;
-    const completo = (j: Job) => !!j.muns.length && j.rows.size >= j.muns.length;
+    const completo = (j: Job) => j.confirmado && !!j.muns.length && j.rows.size >= j.muns.length;
     const maisPedido = (a: Job, b: Job) => b.pedidoEm - a.pedidoEm;
 
     /*
@@ -730,7 +817,7 @@ export class MunicipalService {
         try {
           const row = parseMunicipal(raw, { election: target.election, cd: m.cd, office: job.office, uf: m.uf });
           const previous = job.rows.get(m.cdi);
-          if (!previous || previous.vv !== row.vv || JSON.stringify(previous.cand) !== JSON.stringify(row.cand)) { job.rows.set(m.cdi, { vv: row.vv, cand: row.cand }); job.version++; }
+          if (!previous || previous.vv !== row.vv || JSON.stringify(previous.cand) !== JSON.stringify(row.cand)) { job.rows.set(m.cdi, { vv: row.vv, cand: row.cand, vb: row.vb, vn: row.vn, tv: row.tv, st: row.st, ts: row.ts }); job.version++; }
           job.fetched.set(m.cdi, stamp);
         } catch (e) { this.transport.reject(url, e instanceof Error ? e.message : 'Arquivo municipal inválido'); }
       }
@@ -826,12 +913,15 @@ export class MunicipalService {
         const url = target.url(m);
         const raw = await this.transport.get(url, interval, { priority: 'low', retain: false, timeoutMs: 30_000, expectMissing: true });
         if (raw === null) { if (job.mode === 'historico') pending = true; continue; }
+        // A varredura completa também conta: `fetches` é o que diz que a fonte respondeu para este
+        // job nesta execução, e era ele que faltava para um job vindo do disco se confirmar.
+        job.fetches++;
         if (raw === NOT_MODIFIED) continue;
         try {
           const row = parseMunicipal(raw, { election: target.election, cd: m.cd, office: job.office, uf: m.uf });
           const previous = job.rows.get(m.cdi);
           if (!previous || previous.vv !== row.vv || JSON.stringify(previous.cand) !== JSON.stringify(row.cand)) {
-            job.rows.set(m.cdi, { vv: row.vv, cand: row.cand }); job.version++;
+            job.rows.set(m.cdi, { vv: row.vv, cand: row.cand, vb: row.vb, vn: row.vn, tv: row.tv, st: row.st, ts: row.ts }); job.version++;
           }
           // O carimbo da busca também é anotado aqui, senão `encerrada` nunca reconhece as cidades
           // que vieram pela varredura completa e elas continuam sendo repedidas para sempre.

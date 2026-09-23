@@ -59,6 +59,17 @@ export const CSS = `
   .rank .crow .crow-fact strong { color: #ebe8e1; font-weight: 600; }
   .rank .sep { padding: calc(10px * var(--k)) 0 calc(4px * var(--k)); font-size: calc(15px * var(--k)); letter-spacing: .14em; text-transform: uppercase; color: #5e5c57; }
   .rank .foot { flex: none; padding: calc(12px * var(--k)) 0 0; border-top: 1px solid #1a1d1b; font-size: max(calc(15px * var(--k)), 12px); color: #85827b; }
+  /* A conferencia pelas cidades: campos do TSE somados, nenhum derivado. */
+  .rank .soma { margin-bottom: calc(10px * var(--k)); }
+  .rank .soma-t { font-size: max(calc(12px * var(--k)), 10px); letter-spacing: .07em;
+    text-transform: uppercase; color: #5c605b; margin-bottom: calc(7px * var(--k)); }
+  .rank .soma dl { display: flex; flex-wrap: wrap; gap: calc(7px * var(--k)) calc(16px * var(--k)); margin: 0; }
+  .rank .soma dl > div { display: flex; flex-direction: column; gap: 1px; }
+  .rank .soma dt { font-size: max(calc(12px * var(--k)), 10px); color: #6a6863; }
+  .rank .soma dd { margin: 0; font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+    font-size: max(calc(19px * var(--k)), 15px); color: #e8e4dc; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .rank .soma .ap dd { color: #e8c877; }
+  .rank .soma-p { margin-top: calc(6px * var(--k)); font-size: max(calc(12px * var(--k)), 10px); color: #5c605b; }
 
   .find { position: absolute; left: calc(72px * var(--k)); top: calc(var(--sh-head, 0px) + 126px * var(--k)); z-index: 5; width: calc(460px * var(--k)); }
   .search { position: relative; }

@@ -263,3 +263,33 @@ test('a gravação de uma sessão do simulado não ressuscita na sessão seguint
     assert.equal(cidades(relido), 0, 'a sessão da tarde não herda os números da manhã');
   } finally { t2.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('o que veio do disco não passa por completo até a fonte confirmar', async () => {
+  /*
+   * A regressão: linha vinda do disco preenchia `rows`, o job passava por completo e sumia da fila
+   * de varredura — então nunca mais perguntava nada e servia o retrato antigo como atual. Visto no
+   * simulado de 23/09/2026 com senado e deputado federal em `fetches=0`, 853 linhas e só 12 e 74
+   * cidades com voto, enquanto os cargos que varreram de verdade tinham 423 e 431.
+   */
+  const dir = await mkdtemp(join(tmpdir(), 'pulso-mun-'));
+  const antes = new TseTransport(500, tseComMinas(6).fetch);
+  try {
+    const s = new MunicipalService(antes, hooks(), dir, 0.01);
+    assert.equal(cidades(await ateFechar(s, 'simulado', 'MG', 1, 'governor')), 6);
+    await s.encerrar();
+  } finally { antes.close(); }
+
+  // Processo novo, e agora a fonte tem mais cidades do que o disco guardou.
+  const tse = tseComMinas(6);
+  const depois = new TseTransport(500, tse.fetch);
+  try {
+    const s = new MunicipalService(depois, hooks(), dir, 0.01);
+    const primeiro = await s.get('simulado', 'MG', 1, 'governor');
+    assert.equal(cidades(primeiro), 6, 'o disco entrega as linhas na hora');
+    assert.notEqual('status' in primeiro ? primeiro.status : '', 'ready',
+      'mas não pode se declarar pronto antes de a fonte confirmar');
+
+    await ateFechar(s, 'simulado', 'MG', 1, 'governor');
+    assert.ok(tse.contar('-c0003-e0') > 0, 'o job foi mesmo buscar na fonte em vez de ficar no disco');
+  } finally { depois.close(); await rm(dir, { recursive: true, force: true }); }
+});

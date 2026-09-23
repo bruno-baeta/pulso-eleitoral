@@ -489,9 +489,35 @@ async function main() {
       head = `<div><div class="eyebrow">Mais votados · ${esc(o.noun)}</div><h2>${esc(o.place)}</h2>`
         + `${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div><div class="acts">${clearSel}</div>`;
     }
-    const foot = !data.cities.length ? '' : sel
+    /*
+     * A soma das cidades, ao lado do mapa.
+     *
+     * Todo número aqui é campo que o TSE publica em cada arquivo municipal — nominais, brancos,
+     * nulos, total e seções —, somado cidade a cidade. Nenhum é derivado, e nenhum vem do arquivo
+     * da disputa: é justamente por virem por outro caminho que servem de conferência do percentual
+     * apurado que o painel mostra.
+     *
+     * A contagem de cidades vai no título porque a soma só inclui as que já têm os totais
+     * guardados. Sem ela, um percentual preciso sobre base parcial passaria por conferência.
+     */
+    const t = data.totais;
+    const somatorio = !t || !t.secoesTotais ? '' :
+      `<div class="soma">`
+      + `<div class="soma-t">Somando ${fmtInt(t.cidades)} cidades apuradas</div>`
+      + `<dl>`
+      + `<div><dt>Nominais</dt><dd>${fmtInt(t.nominais)}</dd></div>`
+      + `<div><dt>Brancos</dt><dd>${fmtInt(t.brancos)}</dd></div>`
+      + `<div><dt>Nulos</dt><dd>${fmtInt(t.nulos)}</dd></div>`
+      + `<div><dt>Total</dt><dd>${fmtInt(t.total)}</dd></div>`
+      + `<div class="ap"><dt>Seções</dt><dd>${fmtPercent(t.secoes / t.secoesTotais * 100, 1)}</dd></div>`
+      + `</dl>`
+      + `<div class="soma-p">${fmtInt(t.secoes)} de ${fmtInt(t.secoesTotais)} seções totalizadas nessas cidades</div>`
+      + `</div>`;
+
+    const dica = !data.cities.length ? '' : sel
       ? `Clique de novo no nome para voltar ao mapa de vencedores`
       : `Clique num nome para ver onde essa candidatura foi forte`;
+    const foot = somatorio + (dica ? `<div class="dica">${dica}</div>` : '');
     // `long` turns on content-visibility for the hundreds of rows a city can have. The state
     // ranking is a handful and must stay measurable: skipped content reports its intrinsic size,
     // so scrollHeight would come back equal to clientHeight and nothing would ever be trimmed.

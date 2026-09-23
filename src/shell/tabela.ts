@@ -174,6 +174,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     + `<input placeholder="Buscar cidade" aria-label="Buscar cidade">`
     + `<button aria-label="Fechar">✕</button></header>`
     + `<div class="estado"></div>`
+    + `<div class="soma"></div>`
     + `<div class="rolo"><table><colgroup><col style="width:9%"><col style="width:45%">`
     + `<col style="width:16%"><col style="width:15%"><col style="width:15%"></colgroup>`
     + `<thead><tr><th>#</th><th>Cidade</th><th class="r">Votos</th><th class="r">% válidos</th>`
@@ -184,6 +185,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   const busca = folha.querySelector('input')!;
   const corpo = folha.querySelector('tbody')!;
   const estado = folha.querySelector('.estado') as HTMLElement;
+  const soma = folha.querySelector('.soma') as HTMLElement;
   const mais = folha.querySelector('.mais') as HTMLElement;
 
   type Linha = { nome: string; uf: string; busca: string; votos: number; validos: number; pos: number };
@@ -206,6 +208,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     if (fechada) return;
     type Municipal = {
       status: string; message?: string; loaded?: number; total?: number; cidadesComResultado?: number;
+      totais?: { cidades: number; nominais: number; brancos: number; nulos: number; total: number; secoes: number; secoesTotais: number };
       /** [nome, uf, votos, válidos na cidade, colocação] — já filtrado e ordenado pelo servidor. */
       linhas: [string, string, number, number, number][];
     };
@@ -257,6 +260,26 @@ export function abrirCandidato(o: CandidatoOpcoes) {
      * incompleta, e sem dizer isso a conta simplesmente não fechava para quem estava olhando.
      * Quando bate, a frase confirma que está tudo ali; quando não bate, diz quanto falta.
      */
+    /*
+     * A soma das cidades, para conferir o total da disputa por outro caminho.
+     *
+     * Todo número aqui é campo publicado pelo TSE em cada arquivo municipal — nominais, brancos,
+     * nulos, total e seções —, somado cidade a cidade. Nenhum é derivado. Se o painel diz um
+     * percentual apurado e as seções somadas dizem outro, a diferença fica visível em vez de
+     * suposta.
+     */
+    const t = d.totais;
+    soma.innerHTML = !t || !t.secoesTotais ? '' :
+      `<div class="soma-t">Somando ${fmtInt(t.cidades)} de ${fmtInt(d.cidadesComResultado ?? 0)} cidades publicadas</div>`
+      + `<dl>`
+      + `<div><dt>Votos nominais</dt><dd>${fmtInt(t.nominais)}</dd></div>`
+      + `<div><dt>Brancos</dt><dd>${fmtInt(t.brancos)}</dd></div>`
+      + `<div><dt>Nulos</dt><dd>${fmtInt(t.nulos)}</dd></div>`
+      + `<div><dt>Total de votos</dt><dd>${fmtInt(t.total)}</dd></div>`
+      + `<div><dt>Seções totalizadas</dt><dd>${fmtInt(t.secoes)} de ${fmtInt(t.secoesTotais)}</dd></div>`
+      + `<div class="ap"><dt>Apurado pelas cidades</dt><dd>${fmtPct(t.secoes / t.secoesTotais * 100, 2)}</dd></div>`
+      + `</dl>`;
+
     const somado = linhas.reduce((t, r) => t + r.votos, 0);
     conferencia = !o.votos ? ''
       : somado >= o.votos ? `${fmtInt(somado)} votos em ${fmtInt(linhas.length)} cidades — a soma fecha com o total da candidatura`
@@ -355,6 +378,17 @@ const CSS = `
   .tbl-folha .st.turno { color: #7fb6de; }
   .tbl-folha .t .pt { display: inline-block; width: .28em; height: .8em; margin-right: .45em;
     vertical-align: -.02em; }
+  /* A conferencia da apuracao pelas cidades: campos do TSE somados, nenhum derivado. */
+  .tbl-folha .soma:not(:empty) { padding: 1.4vh 2.2vw; border-bottom: 1px solid #1c211f; }
+  .tbl-folha .soma-t { font-size: clamp(9px, .7vw, 13px); letter-spacing: .08em;
+    text-transform: uppercase; color: #565954; margin-bottom: 1vh; }
+  .tbl-folha .soma dl { display: flex; flex-wrap: wrap; gap: .8vh 2.2vw; margin: 0; }
+  .tbl-folha .soma dl > div { display: flex; flex-direction: column; gap: .25vh; }
+  .tbl-folha .soma dt { font-size: clamp(9px, .7vw, 13px); color: #6a6863; }
+  .tbl-folha .soma dd { margin: 0; font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+    font-size: clamp(13px, 1.05vw, 21px); color: #e8e4dc; font-variant-numeric: tabular-nums; }
+  .tbl-folha .soma .ap dd { color: #e8c877; }
+
   .tbl-folha .estado:not(:empty) { padding: 1.2vh 2.2vw; font-size: clamp(10px, .78vw, 15px);
     color: #6a6863; border-bottom: 1px solid #141817; }
   .tbl-folha .pos { color: #b9b6ae; }
