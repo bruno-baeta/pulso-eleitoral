@@ -118,7 +118,7 @@ export class TseTransport {
     this.requests++;
     this.lastCheckAt = this.clock();
     try {
-      const headers: Record<string, string> = { Accept: 'application/json', 'User-Agent': 'PulsoEleitoral/1.0 (painel pessoal; consumo condicional)' };
+      const headers: Record<string, string> = { Accept: 'application/json', 'User-Agent': 'PulsoEleitoral/1.0 (+https://github.com/bruno-baeta/pulso-eleitoral; consumo condicional)' };
       if (entry.etag) headers['If-None-Match'] = entry.etag;
       if (entry.modified) headers['If-Modified-Since'] = entry.modified;
       const response = await this.fetcher(url, { headers, signal: AbortSignal.timeout(options.timeoutMs ?? 8000), redirect: 'error' });
