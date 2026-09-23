@@ -9,7 +9,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { rm } from 'node:fs/promises';
-import { Collector } from '../server/collector.ts';
+import { Collector, TTL_GRAVACAO } from '../server/collector.ts';
+import { TSE_CEILING } from '../server/transport.ts';
 import { STATES } from '../shared/types.ts';
 
 const DIR = './.teste-gravacao';
@@ -45,4 +46,21 @@ test('RECORD_UFS continua podendo estreitar a gravação, quando for o caso', as
   await comAmbiente('MG,SP', c => {
     assert.deepEqual(c.liveContexts(dentro).map(x => x.uf).sort(), ['MG', 'SP']);
   });
+});
+
+test('a noite da eleição cabe no teto do TSE, com margem', () => {
+  /*
+   * A conta que decide se o projeto pode rodar: 27 estados gravados a cada 15 s, o estado que
+   * alguém está vendo a cada 1 s, e a varredura municipal na fila de baixa prioridade. O teto do
+   * TSE é 100 por segundo, por IP, e quem o estoura é bloqueado no meio da apuração.
+   */
+  const CARGOS = 5;                       // presidente, governador, senado, federal, estadual
+  const gravados = (STATES.length - 1) * CARGOS / (TTL_GRAVACAO / 1000);
+  const emFoco = CARGOS / 1;              // TSE_POLL_MS mínimo é 1000
+  const progresso = 1 / 5;                // o arquivo de andamento, a cada 5 s
+  const municipal = Number(process.env.TSE_LOW_RPS) || 60;
+  const total = gravados + emFoco + progresso + municipal;
+
+  assert.ok(total <= TSE_CEILING, `a coleta pediria ${total.toFixed(1)} req/s, acima do teto`);
+  assert.ok(TSE_CEILING - total >= 10, 'menos de 10 req/s de margem é pouco para um imprevisto');
 });

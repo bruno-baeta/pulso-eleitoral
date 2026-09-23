@@ -74,8 +74,19 @@ Ele reproduz a apuração gravada no disco, minuto a minuto.
 - Nas janelas do TSE — os testes de setembro e as noites de 4 e 25 de outubro de 2026 — ele coleta
   e grava **os 27 estados** sozinho, mesmo sem navegador aberto. O que não for buscado na hora não
   se recupera depois: a apuração já passou.
-- O TSE permite **100 requisições por segundo por IP**. O código trava nesse teto (padrão de 80) e
-  os arquivos municipais viajam numa fila de baixa prioridade, que só usa a folga das disputas.
+- O TSE permite **100 requisições por segundo por IP**, e o código trava nesse teto. A conta de uma
+  noite de eleição, com os 27 estados sendo gravados e o mapa municipal varrendo o país:
+
+  | de onde vem | req/s |
+  |---|---|
+  | 26 estados gravados (5 cargos a cada 15 s) | 8,7 |
+  | o estado que está na tela (5 cargos a cada 1 s) | 5,0 |
+  | arquivo de andamento | 0,2 |
+  | municípios, em fila de baixa prioridade | 60,0 |
+  | **total** | **73,9 de 100** |
+
+  A fila municipal só usa a folga deixada pelas disputas, e um 404 dela — município que ainda não
+  publicou — não pausa a coleta. Rodar duas instâncias atrás do mesmo IP dobra a conta.
 - Fora das janelas, o simulado não é consultado: a tela abre a última sessão gravada, em replay.
 
 Configuração opcional em `.env` — veja `.env.example`.

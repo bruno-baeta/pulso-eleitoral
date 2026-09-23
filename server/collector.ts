@@ -15,7 +15,7 @@ const isLive = (mode: RemoteMode): mode is LiveMode => mode === 'official' || mo
 /** The archive never changes: one fetch per file, then served from memory. */
 const ARCHIVE_TTL = 24 * 60 * 60_000;
 /** Cadência dos estados que estão sendo apenas gravados, sem ninguém olhando (ver fetchRace). */
-const TTL_GRAVACAO = 15_000;
+export const TTL_GRAVACAO = 15_000;
 /** How many events are kept per context. The night's thread is read after the fact, not only live. */
 const FEED_MAX = 200;
 /** Shares of the count worth being told about; anything finer is noise while you are not looking. */
