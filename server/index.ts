@@ -103,7 +103,7 @@ app.get<{ Querystring: { mode: Mode; uf: string; turn: Turn; office: Office; v?:
 /** A disputa inteira, com todas as candidaturas: o que a tabela e a busca pedem ao abrir. */
 app.get<{ Querystring: Query & { office: Office; scope?: string } }>('/api/race', { schema: { querystring: { type: 'object', properties: { ...querySchema.properties, office: { type: 'string', enum: ['president', 'governor', 'senate', 'federal', 'state'] }, scope: { type: 'string', pattern: '^[A-Za-z]{2}$' } }, required: ['office'], additionalProperties: false } } }, async (request, reply) => {
   const { mode, uf, turn, office, scope } = request.query;
-  const race = collector.fullRace(mode, scope ?? uf, turn, office);
+  const race = collector.fullRace(mode, uf, turn, office, scope);
   if (!race) return reply.code(404).send({ error: 'Disputa ainda não publicada.' });
   reply.header('Cache-Control', 'no-store');
   return { office: race.office, uf: race.uf, turn: race.turn, countedPercent: race.countedPercent, seats: race.seats, validVotes: race.validVotes, candidates: race.candidates };
@@ -123,11 +123,11 @@ app.get<{ Querystring: Query & { office: Office; scope?: string } }>('/api/serie
  * do not read events and would pay for them in every poll. The state's own races and the national
  * ones are merged here, which is how a reader thinks about the night.
  */
-app.get<{ Querystring: Query & { limit?: number } }>('/api/feed', { schema: { querystring: { type: 'object', properties: { ...querySchema.properties, limit: { type: 'integer', minimum: 1, maximum: 200 } }, additionalProperties: false } } }, async (request, reply) => {
+app.get<{ Querystring: Query & { limit?: number; abrangencia?: 'br' | 'uf' } }>('/api/feed', { schema: { querystring: { type: 'object', properties: { ...querySchema.properties, limit: { type: 'integer', minimum: 1, maximum: 200 }, abrangencia: { type: 'string', enum: ['br', 'uf'] } }, additionalProperties: false } } }, async (request, reply) => {
   reply.header('Cache-Control', 'no-store');
-  const { mode, uf, turn, limit } = request.query;
+  const { mode, uf, turn, limit, abrangencia } = request.query;
   collector.touch(mode, uf, turn);
-  return { events: collector.feed(mode, uf, turn, limit ?? 120) };
+  return { events: collector.feed(mode, uf, turn, limit ?? 120, abrangencia ?? 'br') };
 });
 app.get<{ Querystring: Query }>('/api/timeline', { schema: { querystring: querySchema } }, async (request, reply) => {
   reply.header('Cache-Control', 'no-store');

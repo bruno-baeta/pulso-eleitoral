@@ -252,9 +252,20 @@ export class Collector {
   // --- Hooks for server/municipal.ts (Território): same election refs, windows and races as the main app.
   electionRef(mode: LiveMode, office: Office, area: string, turn: Turn) { return this.findElection(mode, office, area, turn); }
   isAllowed(mode: Mode) { return this.allowed(mode); }
-  /** The whole race (not trimmed), for candidate names. */
-  fullRace(mode: Mode, uf: string, turn: Turn, office: Office): Race | undefined {
-    return this.races.get(`${mode}:${turn}:${office === 'president' ? 'BR' : uf}:${office}`);
+  /**
+   * The whole race (not trimmed), for candidate names.
+   *
+   * `scope` sobrepõe a área natural do cargo, como em `fetchRace` e `series`: sem ele a presidência
+   * é nacional. Faltava aqui, e a tabela da disputa abria as candidaturas do Brasil sob o rótulo do
+   * estado — afirmar para Minas um número que o TSE publicou para o país.
+   *
+   * A área sobe para maiúsculas porque é assim que `this.races` guarda a chave, e o `scope` chega
+   * da URL como a pessoa escreveu: com `mg` minúsculo a busca não achava nada e a tabela caía no
+   * 404, que é o mesmo defeito com outra cara.
+   */
+  fullRace(mode: Mode, uf: string, turn: Turn, office: Office, scope?: string): Race | undefined {
+    const area = (scope ?? (office === 'president' ? 'BR' : uf)).toUpperCase();
+    return this.races.get(`${mode}:${turn}:${area}:${office}`);
   }
   touch(mode: Mode, uf: string, turn: Turn) {
     this.touched.set(`${mode}:${turn}:${uf}`, { mode, uf, turn, until: Date.now() + 60_000 });
@@ -481,10 +492,30 @@ export class Collector {
     void this.restoreFromRecording(now).catch(() => { /* a próxima leitura preenche */ });
   }
 
-  /** The night's thread for one context: the state's races and the national ones, newest first. */
-  feed(mode: Mode, uf: string, turn: Turn, limit = 120): FeedEvent[] {
-    return [...(this.events.get(`${mode}:${turn}:${uf}`) || []), ...(this.events.get(`${mode}:${turn}:BR`) || [])]
-      .sort((a, b) => b.at - a.at).slice(0, limit);
+  /**
+   * O fio da noite — por padrão, o país inteiro.
+   *
+   * Ele trazia só o estado em foco e as disputas nacionais, e ficava parado por minutos: um estado
+   * sozinho produz pouca coisa, e o rodapé repetia a mesma linha enquanto os outros 26 — todos já
+   * coletados durante a janela — geravam viradas que ninguém via. Os eventos já estão na memória;
+   * o que faltava era juntá-los, e isso não custa uma requisição a mais ao TSE.
+   *
+   * O que **não** vem de fora do estado em foco é o marco de apuração. Vinte e sete estados
+   * cruzando 10% ao mesmo tempo são vinte e sete linhas iguais — a contagem conversando com ela
+   * mesma, que é o defeito que este fio já resolveu uma vez, agora vinte e sete vezes maior. De
+   * fora passam só virada, eleito e fim de totalização: são raros, e é por isso que valem a linha.
+   */
+  feed(mode: Mode, uf: string, turn: Turn, limit = 120, abrangencia: 'br' | 'uf' = 'br'): FeedEvent[] {
+    const proprias = new Set([uf, 'BR']);
+    const RAROS = new Set<FeedEvent['kind']>(['lead', 'elected', 'finished']);
+    const chaves = abrangencia === 'uf'
+      ? [...proprias].map(a => `${mode}:${turn}:${a}`)
+      : [...this.events.keys()].filter(k => k.startsWith(`${mode}:${turn}:`));
+    return chaves
+      .flatMap(k => this.events.get(k) ?? [])
+      .filter(e => proprias.has(e.uf ?? 'BR') || RAROS.has(e.kind))
+      .sort((a, b) => b.at - a.at)
+      .slice(0, limit);
   }
 
   /** The contexts collected on their own during a TSE window, with no browser open. */
