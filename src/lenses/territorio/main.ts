@@ -70,9 +70,10 @@ async function main() {
   // Software-backed contexts composite far more cheaply on machines without GPU raster.
   for (const c of [cBase, cLines, cTop]) c.getContext('2d', { willReadFrequently: true });
   const legend = el('div', 'legend');
+  const soma = el('div', 'soma');
   const progress = el('div', 'progress'); progress.hidden = true;
   const pending = el('div', 'pending'); pending.hidden = true;
-  stage.append(cBase, cLines, el('div', 'shade'), cTop, legend, progress, pending);
+  stage.append(cBase, cLines, el('div', 'shade'), cTop, soma, legend, progress, pending);
   const tabs = el('div', 'tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Cargo');
   const rank = el('section', 'rank'); rank.setAttribute('aria-label', 'Mais votados');
   const find = el('div', 'find', `<div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input type="search" placeholder="Buscar cidade ou candidato" aria-label="Buscar cidade ou candidato" autocomplete="off" spellcheck="false"><div class="sugg" hidden></div></div>`);
@@ -489,35 +490,10 @@ async function main() {
       head = `<div><div class="eyebrow">Mais votados · ${esc(o.noun)}</div><h2>${esc(o.place)}</h2>`
         + `${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div><div class="acts">${clearSel}</div>`;
     }
-    /*
-     * A soma das cidades, ao lado do mapa.
-     *
-     * Todo número aqui é campo que o TSE publica em cada arquivo municipal — nominais, brancos,
-     * nulos, total e seções —, somado cidade a cidade. Nenhum é derivado, e nenhum vem do arquivo
-     * da disputa: é justamente por virem por outro caminho que servem de conferência do percentual
-     * apurado que o painel mostra.
-     *
-     * A contagem de cidades vai no título porque a soma só inclui as que já têm os totais
-     * guardados. Sem ela, um percentual preciso sobre base parcial passaria por conferência.
-     */
-    const t = data.totais;
-    const somatorio = !t || !t.secoesTotais ? '' :
-      `<div class="soma">`
-      + `<div class="soma-t">Somando ${fmtInt(t.cidades)} cidades apuradas</div>`
-      + `<dl>`
-      + `<div><dt>Nominais</dt><dd>${fmtInt(t.nominais)}</dd></div>`
-      + `<div><dt>Brancos</dt><dd>${fmtInt(t.brancos)}</dd></div>`
-      + `<div><dt>Nulos</dt><dd>${fmtInt(t.nulos)}</dd></div>`
-      + `<div><dt>Total</dt><dd>${fmtInt(t.total)}</dd></div>`
-      + `<div class="ap"><dt>Seções</dt><dd>${fmtPercent(t.secoes / t.secoesTotais * 100, 1)}</dd></div>`
-      + `</dl>`
-      + `<div class="soma-p">${fmtInt(t.secoes)} de ${fmtInt(t.secoesTotais)} seções totalizadas nessas cidades</div>`
-      + `</div>`;
-
     const dica = !data.cities.length ? '' : sel
       ? `Clique de novo no nome para voltar ao mapa de vencedores`
       : `Clique num nome para ver onde essa candidatura foi forte`;
-    const foot = somatorio + (dica ? `<div class="dica">${dica}</div>` : '');
+    const foot = dica;
     // `long` turns on content-visibility for the hundreds of rows a city can have. The state
     // ranking is a handful and must stay measurable: skipped content reports its intrinsic size,
     // so scrollHeight would come back equal to clientHeight and nothing would ever be trimmed.
@@ -548,6 +524,30 @@ async function main() {
 
   function renderLegend() {
     const src = `<div class="src">Fonte: TSE, resultados por município · malha municipal do IBGE</div>`;
+    /*
+     * A soma das cidades, para conferir o apurado por outro caminho.
+     *
+     * Todo número é campo que o TSE publica em cada arquivo municipal, somado cidade a cidade —
+     * nenhum é derivado, e nenhum vem do arquivo da disputa.
+     *
+     * A cobertura vai no título e não é detalhe: a soma só inclui a cidade que já tem os totais
+     * guardados, e a varredura começa pelas maiores, que apuram mais devagar. Foi assim que o
+     * bloco mostrou 76,6% ao lado de um painel em 84,0% — dez por cento das cidades, e as mais
+     * atrasadas. Sem a cobertura escrita, a diferença parece erro em vez de recorte.
+     */
+    const t = data.totais;
+    const publicadas = data.cities.reduce((n, c) => n + (c.vv > 0 ? 1 : 0), 0);
+    soma.innerHTML = !t || !t.secoesTotais ? '' :
+      `<div class="soma-t">Somando <b>${fmtInt(t.cidades)}</b> de ${fmtInt(publicadas)} cidades apuradas</div>`
+      + `<dl>`
+      + `<div><dt>Nominais</dt><dd>${fmtInt(t.nominais)}</dd></div>`
+      + `<div><dt>Brancos</dt><dd>${fmtInt(t.brancos)}</dd></div>`
+      + `<div><dt>Nulos</dt><dd>${fmtInt(t.nulos)}</dd></div>`
+      + `<div><dt>Total de votos</dt><dd>${fmtInt(t.total)}</dd></div>`
+      + `<div class="ap"><dt>Seções nessas cidades</dt><dd>${fmtPercent(t.secoes / t.secoesTotais * 100, 1)}</dd></div>`
+      + `</dl>`
+      + `<div class="soma-p">${fmtInt(t.secoes)} de ${fmtInt(t.secoesTotais)} seções totalizadas</div>`;
+
     if (!data.cities.length) { legend.innerHTML = src; return; }
     if (!sel) {
       const top = [...data.wins].sort((a, b) => b[1] - a[1]);

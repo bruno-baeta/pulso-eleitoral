@@ -59,17 +59,6 @@ export const CSS = `
   .rank .crow .crow-fact strong { color: #ebe8e1; font-weight: 600; }
   .rank .sep { padding: calc(10px * var(--k)) 0 calc(4px * var(--k)); font-size: calc(15px * var(--k)); letter-spacing: .14em; text-transform: uppercase; color: #5e5c57; }
   .rank .foot { flex: none; padding: calc(12px * var(--k)) 0 0; border-top: 1px solid #1a1d1b; font-size: max(calc(15px * var(--k)), 12px); color: #85827b; }
-  /* A conferencia pelas cidades: campos do TSE somados, nenhum derivado. */
-  .rank .soma { margin-bottom: calc(10px * var(--k)); }
-  .rank .soma-t { font-size: max(calc(12px * var(--k)), 10px); letter-spacing: .07em;
-    text-transform: uppercase; color: #5c605b; margin-bottom: calc(7px * var(--k)); }
-  .rank .soma dl { display: flex; flex-wrap: wrap; gap: calc(7px * var(--k)) calc(16px * var(--k)); margin: 0; }
-  .rank .soma dl > div { display: flex; flex-direction: column; gap: 1px; }
-  .rank .soma dt { font-size: max(calc(12px * var(--k)), 10px); color: #6a6863; }
-  .rank .soma dd { margin: 0; font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
-    font-size: max(calc(19px * var(--k)), 15px); color: #e8e4dc; font-variant-numeric: tabular-nums; line-height: 1.1; }
-  .rank .soma .ap dd { color: #e8c877; }
-  .rank .soma-p { margin-top: calc(6px * var(--k)); font-size: max(calc(12px * var(--k)), 10px); color: #5c605b; }
 
   .find { position: absolute; left: calc(72px * var(--k)); top: calc(var(--sh-head, 0px) + 126px * var(--k)); z-index: 5; width: calc(460px * var(--k)); }
   .search { position: relative; }
@@ -84,6 +73,23 @@ export const CSS = `
   .progress b { color: #f3f0e9; font-weight: 600; }
   .progress i { display: block; height: 2px; border-radius: 1px; background: #262a27; overflow: hidden; }
   .progress i span { display: block; height: 100%; background: #b9b6ae; transition: width .6s; }
+
+  /* A conferencia pelas cidades: campos do TSE somados, nenhum derivado. Fica abaixo do
+     cabecalho, a esquerda, porque e numero para ser lido junto do mapa e nao no pe de uma lista. */
+  .soma { position: absolute; left: calc(72px * var(--k));
+    /* A variavel --sh-head e a altura da barra do aplicativo. Sem ela o bloco nascia atras do
+       cabecalho e so a ultima linha aparecia. Sem crase neste comentario: ela fecharia o literal. */
+    top: calc(var(--sh-head, 0px) + 26px * var(--k)); z-index: 3; pointer-events: none; }
+  .soma:empty { display: none; }
+  .soma-t { font-size: max(calc(15px * var(--k)), 12px); color: #85827b; margin-bottom: calc(10px * var(--k)); }
+  .soma-t b { color: #e8e4dc; font-variant-numeric: tabular-nums; }
+  .soma dl { display: flex; flex-wrap: wrap; gap: calc(10px * var(--k)) calc(26px * var(--k)); margin: 0; }
+  .soma dl > div { display: flex; flex-direction: column; gap: calc(2px * var(--k)); }
+  .soma dt { font-size: max(calc(14px * var(--k)), 11px); color: #6a6863; }
+  .soma dd { margin: 0; font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+    font-size: max(calc(30px * var(--k)), 20px); color: #e8e4dc; font-variant-numeric: tabular-nums; line-height: 1.05; }
+  .soma .ap dd { color: #e8c877; }
+  .soma-p { margin-top: calc(9px * var(--k)); font-size: max(calc(14px * var(--k)), 11px); color: #5c605b; }
 
   .legend { position: absolute; left: calc(72px * var(--k)); bottom: calc(var(--pl-h, 0px) + 14px * var(--k)); z-index: 3; font-size: max(calc(17px * var(--k)), 13px); color: #a3a099; pointer-events: none; }
   .legend > div { display: flex; flex-direction: column; gap: calc(8px * var(--k)); width: calc(380px * var(--k)); }
