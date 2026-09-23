@@ -152,7 +152,10 @@ const CSS = `
    todas na mesma base. Com flex, uma bancada que quebrava para a segunda fileira de bolinhas
    empurrava so a sigla dela para baixo e serrilhava a linha inteira. */
 .bnc .hemi { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(230px, 20vw, 330px), 1fr));
-  gap: 1.6vh 1.2vw; padding: 2.2vh 2.2vw 0; align-items: start; }
+  gap: 1.6vh 1.2vw; padding: 2.2vh 2.2vw 0;
+  /* stretch: numa fileira todas as celulas ficam com a altura da mais alta, entao os blocos viram
+     cartoes do mesmo tamanho em vez de uma linha serrilhada. */
+  align-items: stretch; }
 .bnc .grupo { display: flex; flex-direction: column; gap: .7vh;
   padding: 1.4vh 1.2vw; border: 1px solid #1c211f; border-radius: 4px; background: #0c0f0e; }
 .bnc .cab { display: flex; align-items: baseline; gap: .45em;
