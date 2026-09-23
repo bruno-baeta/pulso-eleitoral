@@ -8,7 +8,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bancadasDe, porPartido, projetarBancadas, quocienteEleitoral, type Candidatura } from '../src/lenses/tv/bancadas.ts';
+import { bancadasDe, porPartido, projetarBancadas, quocienteEleitoral, type Candidatura, projetarEleitos } from '../src/lenses/tv/bancadas.ts';
 
 const cand = (party: string, votes: number, elected = false): Candidatura =>
   ({ party, votes, elected, color: '#fff' });
@@ -113,4 +113,38 @@ test('disputa vazia não quebra o painel', () => {
   const { bancadas, projetada } = bancadasDe([], 53, 0);
   assert.deepEqual(bancadas, []);
   assert.equal(projetada, true);
+});
+
+test('a projeção de nomes respeita o piso de 10% do quociente', () => {
+  const bancadas = [{ partido: 'AA', cadeiras: 2, votos: 1000, cor: '#1' }];
+  const candidatos = [
+    { party: 'AA', votes: 600, name: 'PASSA FOLGADO' },
+    { party: 'AA', votes: 120, name: 'PASSA RASPANDO' },   // 12% do quociente de 1000
+    { party: 'AA', votes: 80, name: 'FICA DE FORA' },      // 8%: abaixo do piso
+  ];
+  const [aa] = projetarEleitos(candidatos, bancadas, 1000);
+  assert.deepEqual(aa.ocupantes.map(c => c.name), ['PASSA FOLGADO', 'PASSA RASPANDO']);
+  assert.equal(aa.semNome, 0);
+});
+
+test('cadeira sem candidatura apta não ganha nome inventado', () => {
+  const bancadas = [{ partido: 'AA', cadeiras: 3, votos: 1000, cor: '#1' }];
+  const candidatos = [
+    { party: 'AA', votes: 600, name: 'UNICO APTO' },
+    { party: 'AA', votes: 50, name: 'ABAIXO DO PISO' },
+  ];
+  const [aa] = projetarEleitos(candidatos, bancadas, 1000);
+  assert.deepEqual(aa.ocupantes.map(c => c.name), ['UNICO APTO']);
+  assert.equal(aa.semNome, 2, 'as duas vagas restantes voltam para a redistribuição, sem nome');
+});
+
+test('os nomes saem na ordem da votação nominal', () => {
+  const bancadas = [{ partido: 'AA', cadeiras: 3, votos: 900, cor: '#1' }];
+  const candidatos = [
+    { party: 'AA', votes: 200, name: 'TERCEIRO' },
+    { party: 'AA', votes: 400, name: 'PRIMEIRO' },
+    { party: 'AA', votes: 300, name: 'SEGUNDO' },
+  ];
+  const [aa] = projetarEleitos(candidatos, bancadas, 1000);
+  assert.deepEqual(aa.ocupantes.map(c => c.name), ['PRIMEIRO', 'SEGUNDO', 'TERCEIRO']);
 });

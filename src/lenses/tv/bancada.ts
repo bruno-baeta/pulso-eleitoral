@@ -13,7 +13,7 @@
 import type { Candidate, WireRace as Race } from '../../../shared/types';
 import { esc, fmtInt, fmtPercent } from '../../shell/dados';
 import { montarCss } from '../../shell/tabela';
-import { bancadasDe, quocienteEleitoral } from './bancadas';
+import { bancadasDe, projetarEleitos, quocienteEleitoral } from './bancadas';
 
 export interface BancadaOpcoes {
   titulo: string;
@@ -70,25 +70,52 @@ export function abrirBancadas(o: BancadaOpcoes) {
    * exige que a candidatura alcance 10% do quociente, e a fila interna do partido depende disso.
    * Nesse estado as vagas saem como bolinhas vazadas, sem nome, e a folha diz por quê.
    */
-  const eleitosDe = new Map<string, Candidate[]>();
-  for (const c of o.candidatos) {
-    if (!c.elected) continue;
-    const lista = eleitosDe.get(c.party) ?? [];
-    lista.push(c);
-    eleitosDe.set(c.party, lista);
+  const ocupantesDe = new Map<string, Candidate[]>();
+  const semNomeDe = new Map<string, number>();
+  if (projetada) {
+    /*
+     * A projeção também diz quem, e a regra é o art. 108 do Código Eleitoral: entre as candidaturas
+     * do partido com ao menos 10% do quociente, elegem-se as mais votadas, até o número de cadeiras
+     * que o partido fez. Vaga sem candidatura apta fica sem nome — ela volta para a redistribuição
+     * do art. 109, §2º, e inventar um nome ali seria dizer que alguém se elegeu sem base.
+     */
+    for (const p of projetarEleitos(o.candidatos, bancadas, qe)) {
+      ocupantesDe.set(p.partido, p.ocupantes);
+      semNomeDe.set(p.partido, p.semNome);
+    }
+  } else {
+    for (const c of o.candidatos) {
+      if (!c.elected) continue;
+      const lista = ocupantesDe.get(c.party) ?? [];
+      lista.push(c);
+      ocupantesDe.set(c.party, lista);
+    }
+    for (const lista of ocupantesDe.values()) lista.sort((a, b) => b.votes - a.votes);
   }
-  for (const lista of eleitosDe.values()) lista.sort((a, b) => b.votes - a.votes);
 
   const desenho = bancadas.filter(b => b.cadeiras > 0).map(b => {
     const votos = votosDe(b.partido);
-    const eleitos = eleitosDe.get(b.partido) ?? [];
-    const corpo = eleitos.length
-      ? `<ol class="eleitos">${eleitos.map(c =>
-          `<li><i class="assento" style="--cor:${esc(b.cor)}"></i>`
-          + `<span class="nm">${esc(c.name)}</span>`
-          + `<em>${fmtInt(c.votes)}</em></li>`).join('')}</ol>`
-      : `<div class="assentos">${Array.from({ length: b.cadeiras }, () =>
-          `<i class="assento previsto" style="--cor:${esc(b.cor)}"></i>`).join('')}</div>`;
+    const ocupantes = ocupantesDe.get(b.partido) ?? [];
+    const semNome = semNomeDe.get(b.partido) ?? Math.max(0, b.cadeiras - ocupantes.length);
+    /*
+     * Partido sem nenhum nome apto volta a ser bolinha, e não uma lista repetindo a mesma frase.
+     *
+     * Cedo na apuração isso é o normal: com o voto espalhado por mil e seiscentas candidaturas,
+     * ninguém tem 10% do quociente ainda. Visto no simulado das 14h — setenta e sete linhas
+     * iguais dizendo a mesma coisa, que é ruído no lugar de informação. O porquê fica dito uma vez
+     * só, no rodapé, com o número do piso.
+     */
+    const corpo = !ocupantes.length
+      ? `<div class="assentos">${Array.from({ length: b.cadeiras }, () =>
+          `<i class="assento previsto" style="--cor:${esc(b.cor)}"></i>`).join('')}</div>`
+      : `<ol class="eleitos">${ocupantes.map(c =>
+        `<li><i class="assento${projetada ? ' previsto' : ''}" style="--cor:${esc(b.cor)}"></i>`
+        + `<span class="nm">${esc(c.name)}</span>`
+        + `<em>${fmtInt(c.votes)}</em></li>`).join('')}`
+      + Array.from({ length: semNome }, () =>
+        `<li class="anonima"><i class="assento previsto" style="--cor:${esc(b.cor)}"></i>`
+        + `<span class="nm">vaga ainda sem candidatura apta</span></li>`).join('')
+      + `</ol>`;
     return `<div class="grupo">`
       + `<div class="cab"><span class="sg" style="--cor:${esc(b.cor)}">${esc(b.partido)}</span>`
       + `<b>${til}${b.cadeiras}</b> ${b.cadeiras === 1 ? 'cadeira' : 'cadeiras'}</div>`
@@ -113,7 +140,7 @@ export function abrirBancadas(o: BancadaOpcoes) {
     + `<p class="nota">${semApuracao
         ? `As cadeiras aparecem quando os primeiros votos válidos forem publicados pelo TSE.`
         : projetada
-        ? `Projeção pelo quociente eleitoral sobre <b>${fmtPercent(o.race.countedPercent, 1)}</b> apurado — as bolinhas vazadas e o til dizem isso. O TSE ainda não publicou nenhum eleito nesta disputa.`
+        ? `Projeção sobre <b>${fmtPercent(o.race.countedPercent, 1)}</b> apurado: as cadeiras saem do quociente eleitoral e os nomes do art. 108 do Código Eleitoral — entre as candidaturas com ao menos 10% do quociente, as mais votadas do partido. As bolinhas vazadas e o til dizem que é projeção. Nesta disputa o piso é <b>${fmtInt(Math.round(qe * 0.1))}</b> votos; vaga cuja candidatura ainda não o alcançou aparece só como bolinha. O TSE ainda não elegeu ninguém aqui.`
         : `Cadeiras publicadas pelo TSE: <b>${totalCadeiras}</b> de ${o.race.seats}.`}</p>`
     + `<p class="nota">Voto nominal é a soma das candidaturas do partido; o voto de legenda, dado ao número do partido, não entra nesta conta. Um partido pode ficar abaixo do quociente e ainda assim eleger: as vagas que sobram da primeira distribuição vão por maiores médias, e disputa essas sobras quem tem ao menos 80% do quociente.</p>`
     + `</div>`
@@ -169,6 +196,7 @@ const CSS = `
 .bnc ol.eleitos li { display: flex; align-items: center; gap: .5em;
   font-size: clamp(10px, .8vw, 15px); color: #e8e4dc; }
 .bnc ol.eleitos .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bnc ol.eleitos li.anonima .nm { color: #565954; font-style: italic; }
 .bnc ol.eleitos em { margin-left: auto; font-style: normal; color: #8b8981;
   font-variant-numeric: tabular-nums; font-size: .92em; }
 

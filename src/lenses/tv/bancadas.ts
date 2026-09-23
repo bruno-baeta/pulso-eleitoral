@@ -100,3 +100,43 @@ export function bancadasDe(candidatos: Candidatura[], vagas: number, validos: nu
     projetada,
   };
 }
+
+/**
+ * Quem ocuparia as cadeiras projetadas de cada partido.
+ *
+ * A regra é o art. 108 do Código Eleitoral, com a redação da Lei 14.211/21: estão eleitos, entre
+ * os candidatos do partido que tenham obtido **ao menos 10% do quociente eleitoral**, tantos
+ * quantos o quociente partidário indicar, na ordem da votação nominal.
+ *
+ * Os dois limites que esta função respeita, e que são o motivo de ela existir separada:
+ *
+ *   - candidatura abaixo de 10% do quociente não entra, por mais cadeiras que o partido tenha;
+ *   - se o partido tem mais cadeiras do que candidaturas aptas, as vagas que sobram **não** ganham
+ *     nome. Elas voltam para a redistribuição do art. 109, §2º, e inventar um nome ali seria dizer
+ *     que alguém se elegeu sem base.
+ *
+ * Isto é projeção, não resultado. Quem senta é quem o TSE elege, e a tela precisa dizer isso.
+ */
+export interface Projetado<C> { partido: string; ocupantes: C[]; semNome: number }
+
+export function projetarEleitos<C extends { party: string; votes: number }>(
+  candidatos: C[],
+  bancadas: Bancada[],
+  quociente: number,
+): Projetado<C>[] {
+  const piso = quociente * 0.1;
+  const porPartido = new Map<string, C[]>();
+  for (const c of candidatos) {
+    if (c.votes < piso) continue;
+    const lista = porPartido.get(c.party) ?? [];
+    lista.push(c);
+    porPartido.set(c.party, lista);
+  }
+  for (const lista of porPartido.values()) lista.sort((a, b) => b.votes - a.votes);
+
+  return bancadas.filter(b => b.cadeiras > 0).map(b => {
+    const aptos = porPartido.get(b.partido) ?? [];
+    const ocupantes = aptos.slice(0, b.cadeiras);
+    return { partido: b.partido, ocupantes, semNome: b.cadeiras - ocupantes.length };
+  });
+}
