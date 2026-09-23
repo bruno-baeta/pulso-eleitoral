@@ -15,8 +15,6 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "baseline": "node scripts/baseline.mjs",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit",
-    "shoot": "node scripts/shoot.mjs",
     "data:territorio": "node scripts/territorio-2022.mjs"
   },
   "dependencies": {

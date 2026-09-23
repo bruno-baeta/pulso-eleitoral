@@ -1,8 +1,8 @@
-node_modules/
-data/
-dist/
+/node_modules/
+/data/
+/dist/
 .env
-test-results/
+/test-results/
 *.log
 *.tar.gz
-tests/baseline/
+/tests/baseline/

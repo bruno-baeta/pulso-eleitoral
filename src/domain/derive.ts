@@ -6,7 +6,20 @@
  * são fatos sobre a contagem em curso, nunca sobre o desfecho.
  */
 import { STATES, type Candidate, type Office, type WireRace as Race } from '../../shared/types';
-import type { CandidateStatus, RankedCandidate } from '../types/election';
+
+/** A situação de uma candidatura: o que a fonte declarou, ou a leitura da parcial. */
+export type CandidateStatus =
+  | 'elected' | 'runoff' | 'leading' | 'in_seat_range' | 'alternate' | 'not_elected' | 'counting' | 'no_data';
+
+/** A candidatura com o que a tela acrescenta ao lê-la: a ordem, a situação e a distância. */
+export interface RankedCandidate extends Candidate {
+  rank: number;
+  statusKey: CandidateStatus;
+  statusLabel: string;
+  /** Votos atrás de quem está logo acima; nulo para quem lidera. */
+  gapVotes: number | null;
+  gapPoints: number | null;
+}
 import { SENATE_CONTESTED } from './seats';
 import { titleCase } from './format';
 

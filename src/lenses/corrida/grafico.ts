@@ -9,7 +9,7 @@ import '@fontsource/barlow-condensed/500.css';
 import '@fontsource/barlow-condensed/600.css';
 import '@fontsource/barlow-condensed/700.css';
 import type { Office, WireRace as Race, Snapshot } from '../../../shared/types';
-import type { RankedCandidate } from '../../types/election';
+import type { RankedCandidate } from '../../domain/derive';
 import { SIMULADO_WINDOWS, describeWindow, nextWindow, openWindow } from '../../../shared/windows';
 import type { Timeline } from '../../shell/dados';
 import { mountPlayer } from '../../shell/player';
