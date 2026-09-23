@@ -23,7 +23,7 @@ export const CSS = `
    */
   .noite { box-sizing: border-box; height: 100vh; overflow: hidden; display: grid;
     grid-template-rows: minmax(0, 1.02fr) minmax(0, .98fr) auto;
-    padding: calc(var(--sh-head, 69px) + 1.8vh) 2.2vw 0; column-gap: 0;
+    padding: calc(var(--sh-head, 69px) + 1.8vh) 1.3vw 0; column-gap: 0;
     font-family: 'DM Sans Variable', system-ui, sans-serif; color: #f6f3ec; }
 
   /* ── cabeçalho: nome do estado e relógio, sem caixa ────────────────────────────────── */
@@ -40,7 +40,8 @@ export const CSS = `
    * Uma faixa própria logo abaixo da barra do aplicativo dava duas barras empilhadas na mesma
    * tela — e a de baixo ainda ficava escondida atrás da de cima.
    */
-  .canto { display: flex; align-items: center; gap: .8vw; padding-left: 1.2vw;
+  /* o canto respira nas duas bordas: colado na direita, o botão parecia cortado pela tela */
+  .canto { display: flex; align-items: center; gap: .8vw; padding: 0 1.3vw 0 1.2vw;
     border-left: 1px solid #1c211f; }
   /* o estado é escolhido aqui mesmo: trocar de estado é a segunda coisa que se faz nesta tela */
 
@@ -274,7 +275,7 @@ export const CSS = `
     color: #6a6863; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ── o fio da noite ────────────────────────────────────────────────────────────────── */
-  .fio { margin: 0 -2.2vw; height: 4.6vh; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  .fio { margin: 0 -1.3vw; height: 4.6vh; display: grid; grid-template-columns: minmax(0, 1fr) auto;
     align-items: center; border-top: 2px solid #1c211f; }
   .fio .rolo { overflow: hidden; }
   .fio .tira { display: flex; gap: 3.4vw; padding: 0 3.4vw; white-space: nowrap; width: max-content;
