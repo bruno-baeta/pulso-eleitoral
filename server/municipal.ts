@@ -534,14 +534,26 @@ export class MunicipalService {
    */
   private vezDeVarrer(job: Job): boolean {
     const agora = Date.now();
-    let melhor: Job | null = null;
-    for (const j of this.jobs.values()) {
-      if (agora - j.lastRequest > KEEPALIVE) continue;                 // ninguém está olhando para este
-      if (j.muns.length && j.rows.size >= j.muns.length) continue;     // já completo: não disputa
-      // A ordem é a do pedido da tela. Um cargo só aquecido tem `pedidoEm` zero e espera a vez.
-      if (!melhor || j.pedidoEm > melhor.pedidoEm) melhor = j;
-    }
-    return melhor === null || melhor === job;
+    const vivos = [...this.jobs.values()].filter(j => agora - j.lastRequest <= KEEPALIVE);
+    if (!vivos.length) return true;
+    const completo = (j: Job) => !!j.muns.length && j.rows.size >= j.muns.length;
+    const maisPedido = (a: Job, b: Job) => b.pedidoEm - a.pedidoEm;
+
+    /*
+     * O cargo que está na tela nunca perde a vez — nem depois de completo.
+     *
+     * A primeira versão desta regra tirava da disputa todo job completo, e aí um cargo recém-fechado
+     * nunca mais ganhava a vez enquanto qualquer irmão estivesse incompleto: parava de reler o
+     * andamento e congelava no meio da apuração. Um teste do laço pegou isso antes de ir para a
+     * tela. A volta de um cargo completo é barata — um arquivo de andamento e as cidades cujo
+     * carimbo mudou —, e é exatamente assim que ele continua acompanhando.
+     */
+    const daTela = [...vivos].sort(maisPedido)[0];
+    if (job === daTela) return true;
+
+    // Fora ele, uma varredura de fundo por vez: é o que impede os cargos aquecidos de dividirem a
+    // faixa entre si até nenhum terminar.
+    return vivos.filter(j => j !== daTela && !completo(j)).sort(maisPedido)[0] === job;
   }
 
   private async delta(job: Job, target: NonNullable<ReturnType<MunicipalService['target']>>): Promise<boolean | 'idle'> {
