@@ -538,7 +538,19 @@ export class Collector {
    */
   private contextosAtivos(now: number) {
     const emFoco = [...this.subs].map(s => ({ mode: s.mode, uf: s.uf, turn: s.turn, fundo: false }));
-    const observados = [...this.touched.values()].map(s => ({ mode: s.mode, uf: s.uf, turn: s.turn, fundo: false }));
+    /*
+     * Quem só consultou não manda no relógio da apuração.
+     *
+     * `touched` é marcado por toda rota que lê alguma coisa daquele estado — série, fio, mapa
+     * municipal — e valia um minuto no ritmo de quem está com a tela aberta, um segundo por
+     * arquivo. Com o mapa varrendo vários estados, meia dúzia deles entrava nesse ritmo ao mesmo
+     * tempo: medido em 23/09/2026, as corridas consumiam 7,5 req/s por cargo onde o orçamento
+     * previa 1,8 — quatro vezes o planejado, quase tudo respondendo "não modificado".
+     *
+     * Consulta agora vale o ritmo da gravação, que é de quinze segundos. Um segundo continua
+     * existindo para quem tem a aba aberta de verdade, que é quem está assistindo.
+     */
+    const observados = [...this.touched.values()].map(s => ({ mode: s.mode, uf: s.uf, turn: s.turn, fundo: true }));
     const gravados = this.liveContexts(now).map(s => ({ ...s, fundo: true }));
     const unicos = new Map<string, { mode: Mode; uf: string; turn: Turn; fundo: boolean }>();
     for (const c of [...emFoco, ...observados, ...gravados]) {

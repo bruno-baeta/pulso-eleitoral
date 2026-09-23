@@ -561,7 +561,15 @@ export class MunicipalService {
         if (job.focus !== focus) return;
         const stamp = stampOf(m)?.stamp ?? '';
         const url = target.url(m);
-        const raw = await this.transport.get(url, 1500, { priority: 'low', retain: false, timeoutMs: 30_000, expectMissing: true });
+        /*
+         * Uma cidade não é relida mais rápido que o arquivo que anuncia que ela mudou.
+         *
+         * O intervalo era de 1,5 s, e como o arquivo de andamento só é relido a cada `AB_INTERVAL`
+         * não havia como descobrir nada de novo nesse meio-tempo: sobrava um pedido por cidade a
+         * cada segundo e meio, todos respondendo 304. Amarrar os dois ritmos tira esse desperdício
+         * sem atrasar nada — quando o carimbo muda, a cidade entra na lista da próxima volta.
+         */
+        const raw = await this.transport.get(url, AB_INTERVAL, { priority: 'low', retain: false, timeoutMs: 30_000, expectMissing: true });
         if (raw === null) continue;
         job.fetches++;
         if (raw === NOT_MODIFIED) { job.fetched.set(m.cdi, stamp); continue; }
@@ -627,6 +635,19 @@ export class MunicipalService {
     return this.configs.get(key) ?? null;
   }
 
+  /**
+   * A cidade acabou e nós já temos o resultado dela.
+   *
+   * `and='f'` no arquivo de andamento é o TSE dizendo que a totalização daquele município
+   * encerrou; conferido na fonte em 23/09/2026, com as 853 cidades de Minas encerradas, nenhum
+   * carimbo mudou em vinte segundos. Com a linha já gravada e o carimbo igual ao da busca, não há
+   * o que descobrir pedindo de novo.
+   */
+  private encerrada(job: Job, m: MunRef): boolean {
+    const carimbo = job.stamps.get(`${m.uf}${m.cd}`);
+    return !!carimbo?.finished && job.rows.has(m.cdi) && job.fetched.get(m.cdi) === carimbo.stamp;
+  }
+
   /** One pass over the municipalities, the viewer's own state first. Returns true when nothing was left to try. */
   private async pass(job: Job, target: NonNullable<ReturnType<MunicipalService['target']>>): Promise<boolean> {
     const order = [...job.muns].sort((a, b) => Number(b.uf === job.focus) - Number(a.uf === job.focus) || Number(b.capital) - Number(a.capital));
@@ -638,6 +659,16 @@ export class MunicipalService {
         if (Date.now() - job.lastRequest > KEEPALIVE || this.transport.cooldownUntil > Date.now()) { pending = true; return; }
         if (job.mode === 'historico' && job.rows.has(m.cdi)) continue;
         if (job.mode === 'historico' && await this.fromDisk(job, target, m)) continue;
+        /*
+         * Cidade que o TSE declarou encerrada e que já temos não é pedida de novo.
+         *
+         * A varredura completa repassava por todas as cidades a cada ciclo, e ao fim da apuração
+         * isso vira trabalho puro de 304. Medido em 23/09/2026, com a simulação em 100%: 42 req/s
+         * de arquivos municipais, todos "não modificado", com nada para descobrir. O `and='f'` do
+         * arquivo de andamento é o próprio TSE dizendo que aquele município acabou — depois disso
+         * o arquivo não muda mais.
+         */
+        if (job.mode !== 'historico' && this.encerrada(job, m)) continue;
         const url = target.url(m);
         const raw = await this.transport.get(url, interval, { priority: 'low', retain: false, timeoutMs: 30_000, expectMissing: true });
         if (raw === null) { if (job.mode === 'historico') pending = true; continue; }
@@ -648,6 +679,9 @@ export class MunicipalService {
           if (!previous || previous.vv !== row.vv || JSON.stringify(previous.cand) !== JSON.stringify(row.cand)) {
             job.rows.set(m.cdi, { vv: row.vv, cand: row.cand }); job.version++;
           }
+          // O carimbo da busca também é anotado aqui, senão `encerrada` nunca reconhece as cidades
+          // que vieram pela varredura completa e elas continuam sendo repedidas para sempre.
+          if (job.mode !== 'historico') job.fetched.set(m.cdi, job.stamps.get(`${m.uf}${m.cd}`)?.stamp ?? '');
           if (row.sourceAt && (!job.sourceAt || row.sourceAt > job.sourceAt)) job.sourceAt = row.sourceAt;
           if (job.mode === 'historico') {
             const path = this.rowCachePath(target.election, target.code(m.uf), m.uf, m.cd);
