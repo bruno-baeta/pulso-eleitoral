@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101310" />
+    <meta name="description" content="Acompanhe as Eleições 2026 em um painel panorâmico com resultados oficiais do TSE, atualização automática e Minas Gerais em destaque." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Pulso — Corrida</title>
+    <style>
+      /* The four views are separate documents: this opts the navigation between them into the
+         browser's own crossfade. It has to be here, in the parsed CSS, not injected later. */
+      @view-transition { navigation: auto; }
+      /* These have to sit here too, in the parsed CSS: on a cross-document transition the browser
+         starts the animation at the new document's first paint, before the module has injected a
+         stylesheet, so rules added later never apply and Chrome's default crossfade runs instead —
+         it dims the outgoing screen to nothing while this one is still empty.
+         The outgoing page is held at full opacity and the new one waits at zero on top of it, so
+         something opaque is on screen in every frame. Views take 0,36-0,83s to build themselves,
+         which is too wide a range for a fixed duration: the wait is open-ended (capped at 1,4s in
+         case a view never reports in) and `sh-ready`, set the moment this view is built, cuts it
+         short and fades the finished page in. */
+      ::view-transition-old(root) { animation: sh-hold 1.4s linear both; }
+      ::view-transition-new(root) { animation: sh-wait 1.4s linear both; }
+      :root.sh-ready::view-transition-old(root) { animation: sh-hold .22s linear both; }
+      :root.sh-ready::view-transition-new(root) { animation: sh-fade .22s ease-out both; }
+      @keyframes sh-hold { from, to { opacity: 1; } }
+      @keyframes sh-wait { from, to { opacity: 0; } }
+      @keyframes sh-fade { from { opacity: 0; } to { opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) {
+        ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+      }
+      /* The page's own stylesheet is injected by the module, so without this the browser paints
+         a white page first and the load reads as a flash. */
+      html, body { margin: 0; height: 100%; background: #0a0c0b; color-scheme: dark; }
+      /* The view's own content fades in when it has something to show, so a screen never pops
+         into place. It has to be here, before the module's stylesheet, or the content would
+         paint first and then be hidden. */
+      #app { opacity: 0; transition: opacity .2s ease; }
+      html.sh-ready #app { opacity: 1; }
+      @media (prefers-reduced-motion: reduce) { #app { opacity: 1; transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/raias/main.ts"></script>
+  </body>
+</html>
