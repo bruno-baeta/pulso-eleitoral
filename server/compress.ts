@@ -19,7 +19,10 @@ const TETO = 48 * 1024 * 1024;
 /** A etiqueta de conteúdo: dois corpos iguais têm a mesma, e é ela que evita recomprimir. */
 export const contentTag = (body: string | Buffer) => `W/"${createHash('sha1').update(body).digest('base64url').slice(0, 22)}"`;
 
-export function registrarCompressao(app: FastifyInstance) {
+/** Quantas compressões foram feitas de verdade e quantas reaproveitaram o cache. */
+export interface ContasCompressao { comprimidos: number; reaproveitados: number }
+
+export function registrarCompressao(app: FastifyInstance): ContasCompressao {
   /*
    * Sem cache, a mesma resposta é comprimida de novo a cada pedido — um megabyte custa uns 100 ms
    * de brotli, que em rede local é mais lento do que não comprimir. A chave é o conteúdo, então um
@@ -27,6 +30,15 @@ export function registrarCompressao(app: FastifyInstance) {
    * O limite é em bytes, e sai quem entrou primeiro.
    */
   const guardados = new Map<string, Buffer>();
+  /*
+   * As contas existem para que o cache seja verificável sem cronômetro.
+   *
+   * O teste provava o cache medindo que a segunda passada era três vezes mais rápida, e isso
+   * falhava sozinho quando a máquina estava ocupada — 39,9 ms contra 74,2 ms num dia de coleta.
+   * Teste que pisca esconde regressão de verdade, então o que ele pergunta agora é o fato: houve
+   * uma compressão nova ou não.
+   */
+  const contas: ContasCompressao = { comprimidos: 0, reaproveitados: 0 };
   let bytes = 0;
   const guardar = (chave: string, valor: Buffer) => {
     guardados.set(chave, valor); bytes += valor.length;
@@ -43,8 +55,9 @@ export function registrarCompressao(app: FastifyInstance) {
     if (!modo) return payload;
     const chave = `${String(reply.getHeader('etag') ?? contentTag(body))}:${modo}`;
     let saida = guardados.get(chave);
-    if (saida) { guardados.delete(chave); guardados.set(chave, saida); }   // volta para o fim da fila
+    if (saida) { guardados.delete(chave); guardados.set(chave, saida); contas.reaproveitados++; }   // volta para o fim da fila
     else {
+      contas.comprimidos++;
       saida = modo === 'br'
         ? await br(body, { params: { [zlib.BROTLI_PARAM_QUALITY]: 5, [zlib.BROTLI_PARAM_SIZE_HINT]: body.length } })
         : await gz(body, { level: 6 });
@@ -55,4 +68,6 @@ export function registrarCompressao(app: FastifyInstance) {
     reply.removeHeader('content-length');
     return saida;
   });
+
+  return contas;
 }

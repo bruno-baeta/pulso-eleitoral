@@ -116,22 +116,32 @@ test('duas respostas com a mesma etiqueta não são comprimidas duas vezes', asy
   await app.close();
 });
 
-test('recomprimir o mesmo corpo custa menos na segunda vez', async () => {
-  const app = montar();
+test('o mesmo corpo não é comprimido duas vezes', async () => {
+  /*
+   * A pergunta é se houve compressão nova, não se o relógio andou menos.
+   *
+   * A versão anterior media as duas passadas e exigia que a segunda fosse três vezes mais rápida.
+   * Passava quase sempre e falhava sozinha quando a máquina estava ocupada — 39,9 ms contra
+   * 74,2 ms durante uma janela de coleta. Um teste que pisca é pior que um teste que falta: ele
+   * ensina a ignorar a luz vermelha.
+   */
+  // App próprio: `montar()` já registra a compressão, e registrar duas vezes poria dois ganchos.
+  const app = Fastify();
+  const contas = registrarCompressao(app);
   const grande = corpoGrande(1_000_000);
   app.get('/api/enorme', async (_pedido, resposta) => resposta.type('application/json; charset=utf-8').send(grande));
 
-  const medir = async () => {
-    const inicio = process.hrtime.bigint();
-    const resposta = await app.inject({ method: 'GET', url: '/api/enorme', headers: { 'accept-encoding': 'br' } });
-    return { ms: Number(process.hrtime.bigint() - inicio) / 1e6, resposta };
-  };
-  const primeira = await medir();
-  const segunda = await medir();
+  const pedir = () => app.inject({ method: 'GET', url: '/api/enorme', headers: { 'accept-encoding': 'br' } });
+  const primeira = await pedir();
+  assert.equal(contas.comprimidos, 1, 'a primeira passada comprime');
+  assert.equal(contas.reaproveitados, 0);
 
-  assert.equal(primeira.resposta.headers['content-encoding'], 'br');
-  assert.deepEqual(segunda.resposta.rawPayload, primeira.resposta.rawPayload);
-  assert.ok(segunda.ms < primeira.ms / 3, `a segunda passada (${segunda.ms.toFixed(1)} ms) devia ser muito mais barata que a primeira (${primeira.ms.toFixed(1)} ms)`);
+  const segunda = await pedir();
+  assert.equal(contas.comprimidos, 1, 'a segunda não comprimiu de novo');
+  assert.equal(contas.reaproveitados, 1, 'ela reaproveitou o que estava guardado');
+
+  assert.equal(primeira.headers['content-encoding'], 'br');
+  assert.deepEqual(segunda.rawPayload, primeira.rawPayload);
   await app.close();
 });
 
