@@ -81,7 +81,6 @@ export function abrirBancadas(o: BancadaOpcoes) {
 
   const desenho = bancadas.filter(b => b.cadeiras > 0).map(b => {
     const votos = votosDe(b.partido);
-    const doQuociente = qe > 0 ? ` · ${fmtPercent(votos / qe * 100, 0)} do quociente` : '';
     const eleitos = eleitosDe.get(b.partido) ?? [];
     const corpo = eleitos.length
       ? `<ol class="eleitos">${eleitos.map(c =>
@@ -93,7 +92,7 @@ export function abrirBancadas(o: BancadaOpcoes) {
     return `<div class="grupo">`
       + `<div class="cab"><span class="sg" style="--cor:${esc(b.cor)}">${esc(b.partido)}</span>`
       + `<b>${til}${b.cadeiras}</b> ${b.cadeiras === 1 ? 'cadeira' : 'cadeiras'}</div>`
-      + `<div class="vts">${fmtInt(votos)} votos nominais${doQuociente}</div>`
+      + `<div class="vts">${fmtInt(votos)} votos nominais</div>`
       + corpo
       + `</div>`;
   }).join('');
@@ -106,7 +105,7 @@ export function abrirBancadas(o: BancadaOpcoes) {
     + `<button aria-label="Fechar">✕</button></header>`
     + `<div class="rolo">`
     + `<p class="preco">${qe > 0 && !semApuracao
-        ? `Cada cadeira custa <b>${fmtInt(qe)}</b> votos — o quociente eleitoral, que é os votos válidos divididos pelas vagas.`
+        ? `Cada cadeira custa <b>${fmtInt(qe)}</b> votos: é o quociente eleitoral, os ${fmtInt(o.race.validVotes)} votos válidos repartidos pelas ${o.race.seats} vagas.`
         : 'O quociente eleitoral aparece quando os votos válidos começam a ser publicados.'}</p>`
     + (desenho
       ? `<div class="hemi">${desenho}</div>`
