@@ -1,7 +1,8 @@
 # Pulso Eleitoral
 
-Acompanhamento da apuração do TSE em três telas: **TV**, **Corrida** e **Território**.
-Os dados vêm dos arquivos públicos do TSE; nada aqui é projeção.
+**Acompanhe a eleição de 2026 pelo Pulso** — a apuração do TSE em três telas: **TV**, **Corrida** e
+**Território**. Os dados vêm dos arquivos públicos do TSE, chegam segundo a segundo e ficam
+gravados no seu disco: dá para voltar a apuração e assistir de novo. Nada aqui é projeção.
 
 ![TV](docs/img/tv.png)
 
@@ -10,7 +11,7 @@ Os dados vêm dos arquivos públicos do TSE; nada aqui é projeção.
 Precisa de **Node 22.12+**.
 
 ```bash
-git clone <este-repositório> pulso-eleitoral
+git clone https://github.com/bruno-baeta/pulso-eleitoral.git
 cd pulso-eleitoral
 npm install
 npm run dev
