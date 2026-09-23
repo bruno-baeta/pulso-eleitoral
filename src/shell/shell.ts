@@ -38,15 +38,20 @@ export function simuladoAvailability(now = Date.now()): { hint: string; recorded
   return { recorded: true, hint: `Fora da janela: replay da última sessão gravada, sem consultar o TSE.${next ? ` Próxima janela: ${describeWindow(next)}.` : ''}` };
 }
 
-/** Year and round in one list. The TSE simulation is a 2026 rehearsal, so it rides with that year. */
-const SOURCES = (): { mode: Mode; label: string; hint?: string; recorded?: boolean }[] => [
-  { mode: 'official', label: '2026' },
-  { mode: 'historico', label: '2022' },
-  { mode: 'simulado', label: '2026 · Simulação', ...simuladoAvailability() },
-];
-const ROUNDS: { turn: Turn; label: string }[] = [
-  { turn: 1, label: 'Primeiro Turno' },
-  { turn: 2, label: 'Segundo Turno' },
+/**
+ * As apurações que existem — e só elas.
+ *
+ * A lista era o cruzamento de três fontes por dois turnos, e metade do resultado não existia:
+ * "2022 · Segundo Turno" para uma disputa estadual que não teve segundo turno, "Simulação ·
+ * Segundo Turno" para um ensaio que o TSE só publica no primeiro. Escolher uma delas abria uma
+ * tela vazia sem explicação. Aqui cada linha é uma apuração real: os dois turnos de 2026, o
+ * primeiro de 2022 e o simulado, que não tem turno para escolher.
+ */
+const FONTES = (): { mode: Mode; turn: Turn; label: string; hint?: string }[] => [
+  { mode: 'official', turn: 1, label: '2026 · 1º turno' },
+  { mode: 'official', turn: 2, label: '2026 · 2º turno' },
+  { mode: 'historico', turn: 1, label: '2022 · 1º turno' },
+  { mode: 'simulado', turn: 1, label: '2026 · Simulação', ...simuladoAvailability() },
 ];
 
 const chevron = '<svg class="chev" viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5 11 1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -55,10 +60,10 @@ const field = (label: string, key: string, options: string) =>
 
 /** What the header keeps in sight: the view on screen, the year and the state. */
 function headFieldsHtml(active: LensKey): string {
-  const years = SOURCES().flatMap(o => ROUNDS.map(r => {
-    const value = `${o.mode}|${r.turn}`, on = o.mode === MODE && r.turn === TURN;
-    return `<option value="${value}" ${on ? 'selected' : ''} title="${esc(o.hint ?? '')}">${o.label} · ${r.label}</option>`;
-  })).join('');
+  const years = FONTES().map(o => {
+    const on = o.mode === MODE && o.turn === TURN;
+    return `<option value="${o.mode}|${o.turn}" ${on ? 'selected' : ''} title="${esc(o.hint ?? '')}">${o.label}</option>`;
+  }).join('');
   return field('Visão', 'lens', LENSES.map(l => `<option value="${l.key}" ${l.key === active ? 'selected' : ''}>${l.label}</option>`).join(''))
     + field('Ano', 'year', years)
     + field('Estado', 'uf', STATES.map(s => `<option value="${s.uf}" ${s.uf === UF ? 'selected' : ''}>${esc(s.name)}</option>`).join(''));
@@ -84,12 +89,7 @@ export function wireSelectors(root: ParentNode) {
   const sim = [...root.querySelectorAll<HTMLOptionElement>('select[data-k="year"] option')].filter(o => o.value.startsWith('simulado|'));
   if (sim.length) setInterval(() => {
     const a = simuladoAvailability();
-    for (const opt of sim) {
-      const round = ROUNDS.find(r => `simulado|${r.turn}` === opt.value)!;
-      opt.disabled = false;
-      opt.title = a.hint;
-      opt.textContent = `2026 · Simulação · ${round.label}`;
-    }
+    for (const opt of sim) { opt.disabled = false; opt.title = a.hint; }
   }, 30_000);
 }
 
