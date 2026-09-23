@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { assemblySeats, CHAMBER_SEATS } from '../src/domain/seats.ts';
 import { fmtInt, fmtPercent, fmtPoints, fmtSigned, titleCase, fold } from '../src/domain/format.ts';
 import { candidateStatus, contestedSeats, publishedStatus, rankCandidates, seatsByParty } from '../src/domain/derive.ts';
+import { escalaY } from '../src/lenses/corrida/escala.ts';
 import type { Race } from '../shared/types.ts';
 
 const race = (over: Partial<Race> = {}): Race => ({
@@ -69,3 +70,24 @@ test('ranking sorts by votes for display and derives standing without inferring 
 
 
 
+
+test('escala do eixo: teto com folga e rótulos em números redondos', () => {
+  // em votos: a década manda, e cabem no máximo cinco rótulos
+  const votos = escalaY(1_492_047, false);
+  assert.equal(votos.passo, 500_000);
+  assert.equal(votos.teto, 2_000_000);
+  assert.ok(votos.teto >= 1_492_047 * 1.08, 'a curva não pode encostar no topo');
+  assert.ok(votos.teto / votos.passo <= 5, 'mais de cinco rótulos enchem o eixo');
+
+  // em porcentagem: escada fixa, e o teto nunca passa de 100
+  const pct = escalaY(48.4, true);
+  assert.equal(pct.passo, 20);
+  assert.equal(pct.teto, 60);
+  assert.equal(escalaY(99, true).teto, 100, '100% é o teto do mundo');
+
+  // uma disputa proporcional se decide em frações de ponto: a escada desce até o ponto inteiro
+  const miudo = escalaY(0.42, true);
+  assert.equal(miudo.passo, 1);
+  assert.equal(miudo.teto, 2);
+  assert.ok(escalaY(0, false).teto > 0, 'sem voto nenhum, o eixo ainda existe');
+});

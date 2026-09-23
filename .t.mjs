@@ -1,0 +1,16 @@
+import { chromium } from './node_modules/playwright/index.mjs';
+const b = await chromium.launch();
+const p = await b.newPage({ viewport: { width: 1920, height: 1080 } });
+const erros = []; p.on('pageerror', e => erros.push(e.message));
+await p.goto('http://127.0.0.1:5173/corrida.html?mode=historico&uf=MG&turn=1&cargo=governor', { waitUntil: 'load' });
+await p.waitForTimeout(7000);
+await p.locator('.mtog', { hasText: 'ver tabela' }).locator('visible=true').first().click();
+await p.waitForTimeout(2000);
+console.log('tabela:', await p.$eval('.sheet .t', e => e.textContent), '|', await p.$eval('.sheet .s', e => e.textContent));
+await p.keyboard.press('Escape');
+await p.waitForTimeout(500);
+await p.locator('.med').locator('visible=true').first().click();
+await p.waitForTimeout(2500);
+console.log('candidato:', await p.$eval('.sheet.cand .t', e => e.textContent).catch(() => 'não abriu'));
+console.log('erros:', erros);
+await b.close();
