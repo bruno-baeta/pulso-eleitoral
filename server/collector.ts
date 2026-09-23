@@ -253,6 +253,12 @@ export class Collector {
   electionRef(mode: LiveMode, office: Office, area: string, turn: Turn) { return this.findElection(mode, office, area, turn); }
   isAllowed(mode: Mode) { return this.allowed(mode); }
   /**
+   * A sessão de apuração em curso, para o Território guardar a varredura por sessão.
+   *
+   * O histórico não tem sessão — é um resultado fechado —, e por isso devolve o ano do arquivo.
+   */
+  sessionOf(mode: Mode) { return mode === 'historico' ? ARCHIVE.year : this.session(mode as LiveMode); }
+  /**
    * The whole race (not trimmed), for candidate names.
    *
    * `scope` sobrepõe a área natural do cargo, como em `fetchRace` e `series`: sem ele a presidência

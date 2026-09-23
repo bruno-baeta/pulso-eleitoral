@@ -25,6 +25,13 @@ export interface MunicipalHooks {
   touch(mode: Mode, uf: string, turn: Turn): void;
   /** What the collector is already recording: live contexts to keep a municipal build ready for. */
   live(): { mode: Mode; uf: string; turn: Turn }[];
+  /**
+   * Qual sessão de apuração está em curso, como o gravador das corridas a nomeia.
+   *
+   * A gravação municipal é guardada por sessão: sem isso, a janela da tarde abriria com os números
+   * da manhã na tela, e uma apuração antiga passaria por atual.
+   */
+  session(mode: Mode): string;
 }
 
 /** Wire format: c = [[number, total]] by total; m = [[ibge, name, uf, valid, [candIndex, votes, …]]]; n = names. */
@@ -69,6 +76,8 @@ interface Job {
   pedidoEm: number;
   /** Live delta: last UF progress stamp per TSE municipality (uf+cd), the stamp each city was fetched at, and which UF files were read. */
   stamps: Map<string, AbCity>; fetched: Map<string, string>; abSeen: Set<string>; abRotation: number; fetches: number;
+  /** Versão já gravada em disco, e quando — o que evita reescrever um megabyte a cada volta. */
+  salvo: { version: number; em: number };
   body?: { version: number; namesAt: number; payload: MunicipalPayload };
 }
 
@@ -176,9 +185,9 @@ export class MunicipalService {
     const key = `${mode}:${turn}:${area}:${office}`;
     let job = this.jobs.get(key);
     if (!job) {
-      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0 };
+      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 } };
       this.jobs.set(key, job);
-      if (mode === 'historico') await this.loadBuilt(job);
+      await this.loadBuilt(job);
     }
     job.lastRequest = Date.now();
     job.pedidoEm = job.lastRequest;
@@ -210,10 +219,9 @@ export class MunicipalService {
       const key = `${mode}:${turn}:${area}:${office}`;
       let job = this.jobs.get(key);
       if (!job) {
-        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0 };
+        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 } };
         this.jobs.set(key, job);
-        if (mode === 'historico') void this.loadBuilt(job).then(() => { if (!job!.running && job!.status !== 'ready') void this.run(job!); });
-        else void this.run(job);
+        void this.loadBuilt(job).then(() => { if (!job!.running && job!.status !== 'ready') void this.run(job!); });
         continue;
       }
       job.lastRequest = Date.now();
@@ -303,7 +311,7 @@ export class MunicipalService {
           const key = `historico:${turn}:${area}:${office}`;
           let job = this.jobs.get(key);
           if (!job) {
-            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0 };
+            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 } };
             this.jobs.set(key, job);
             await this.loadBuilt(job);
           }
@@ -374,10 +382,31 @@ export class MunicipalService {
   }
 
   // --- 2022 builds on disk -------------------------------------------------------------------
-  private builtPath(job: Job) { return `${this.dataDir}/municipal/${job.mode}-t${job.turn}-${job.area.toLowerCase()}-${job.office}.json`; }
+  /**
+   * Onde a varredura de um cargo fica guardada.
+   *
+   * O 2022 é um resultado fechado e mora num arquivo só, com o nome que sempre teve — há 47 deles
+   * em disco e eles continuam válidos. O ao vivo leva a sessão no caminho, como o gravador das
+   * corridas já faz: a janela da tarde não pode abrir com os números da manhã, e a apuração de
+   * outubro não pode herdar nada de um simulado de setembro.
+   */
+  private builtPath(job: Job) {
+    if (job.mode === 'historico') return `${this.dataDir}/municipal/historico-t${job.turn}-${job.area.toLowerCase()}-${job.office}.json`;
+    const sessao = this.hooks.session(job.mode) || 'sem-sessao';
+    return `${this.dataDir}/municipal/${job.mode}/${sessao}/t${job.turn}-${job.area.toLowerCase()}-${job.office}.json`;
+  }
 
+  /**
+   * Repõe do disco o que já tinha sido varrido.
+   *
+   * Vale para toda fonte, não só para 2022. O relato que trouxe isto à tona: reiniciar deixava
+   * todas as tabelas de cidade vazias, porque o dado ao vivo só existia em memória — e, fora da
+   * janela, o laço decide `rows.size ? 'ready' : 'waiting'`, então a tela ficava em "waiting" para
+   * sempre, sem explicação e sem saída. Um restart no meio de uma apuração custava, além disso,
+   * rebuscar 8.983 arquivos do TSE.
+   */
   private async loadBuilt(job: Job) {
-    const legacy = job.turn === 1 && (job.area === 'MG' || (job.area === 'BR' && job.office === 'president'))
+    const legacy = job.mode === 'historico' && job.turn === 1 && (job.area === 'MG' || (job.area === 'BR' && job.office === 'president'))
       ? `${this.dataDir}/territorio-build/${job.area === 'BR' ? 'br-presidente' : `mg-${{ governor: 'governador', senate: 'senado', federal: 'deputado-federal', state: 'deputado-estadual', president: '' }[job.office]}`}.json`
       : null;
     for (const path of [this.builtPath(job), legacy]) {
@@ -393,7 +422,12 @@ export class MunicipalService {
           cand.sort((a, b) => b[1] - a[1]);
           job.rows.set(cdi, { vv, cand });
         }
-        job.status = 'ready'; job.message = `Resultado final de ${ARCHIVE.year} por município.`; job.version = 1;
+        job.version = 1;
+        job.salvo = { version: job.version, em: Date.now() };
+        if (job.mode === 'historico') { job.status = 'ready'; job.message = `Resultado final de ${ARCHIVE.year} por município.`; }
+        // Ao vivo o número continua andando: o que veio do disco é ponto de partida, e quem decide
+        // se está completo é o laço, comparando com a lista de municípios da fonte.
+        else job.message = 'Resultados por município recuperados do disco.';
         return;
       } catch { /* not built yet */ }
     }
@@ -405,6 +439,25 @@ export class MunicipalService {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(`${path}.tmp`, JSON.stringify({ c: payload.c, m: payload.m }));
     await rename(`${path}.tmp`, path);
+    job.salvo = { version: job.version, em: Date.now() };
+  }
+
+  /**
+   * Grava se houver o que gravar, e não mais que de trinta em trinta segundos.
+   *
+   * O arquivo de um cargo passa de um megabyte, e a varredura muda a versão a cada cidade que
+   * chega: escrever a cada volta seria reescrever um megabyte por segundo sem necessidade. Trinta
+   * segundos é o que se perde num corte de luz, contra uma apuração inteira que se perdia antes.
+   */
+  private async talvezSalvar(job: Job, forcar = false) {
+    if (job.mode === 'historico' || !job.rows.size || job.version === job.salvo.version) return;
+    if (!forcar && Date.now() - job.salvo.em < 30_000) return;
+    await this.saveBuilt(job).catch(e => console.error('Municípios:', e instanceof Error ? e.message : e));
+  }
+
+  /** Descarrega o que estiver pendente. O encerramento do processo não pode levar a varredura junto. */
+  async encerrar() {
+    for (const job of this.jobs.values()) await this.talvezSalvar(job, true);
   }
 
   private rowCachePath(election: string, code: number, uf: string, cd: string) {
@@ -466,6 +519,7 @@ export class MunicipalService {
           if (!delta) await this.pass(job, target);
           job.status = job.rows.size >= job.muns.length ? 'ready' : 'loading';
           job.message = job.status === 'ready' ? 'Resultados por município recebidos do TSE.' : 'Recebendo os resultados por município.';
+          await this.talvezSalvar(job, job.status === 'ready');
           await sleep(delta === 'idle' ? 3000 : delta ? 500 : 5000);
           continue;
         }

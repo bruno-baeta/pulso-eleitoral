@@ -27,6 +27,7 @@ const municipal = new MunicipalService(collector.transport, {
   race: (mode, uf, turn, office) => collector.fullRace(mode, uf, turn, office),
   touch: (mode, uf, turn) => collector.touch(mode, uf, turn),
   live: () => collector.liveContexts(),
+  session: mode => String(collector.sessionOf(mode)),
 });
 // Idle time is when the archive's per-municipality files get fetched ahead (see municipal.ts).
 municipal.startIdleWarming();
@@ -179,6 +180,13 @@ if (existsSync(dist)) {
 } else {
   app.get('/', async (_request, reply) => reply.redirect('http://localhost:5173'));
 }
-app.addHook('onClose', async () => collector.close());
+/*
+ * O encerramento descarrega o que ainda não foi para o disco.
+ *
+ * A varredura municipal só grava de trinta em trinta segundos, para não reescrever um megabyte a
+ * cada cidade que chega. Sem este descarregamento, um SIGTERM no meio da apuração levava junto o
+ * último trecho — e era o dado municipal inteiro que se perdia antes disto existir.
+ */
+app.addHook('onClose', async () => { await municipal.encerrar(); await collector.close(); });
 await app.listen({ host: process.env.HOST || '127.0.0.1', port: Number(process.env.PORT) || 3001 });
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { void app.close().then(() => process.exit(0)); });
