@@ -255,7 +255,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
 const titulo = titleCase;
 
 let montado = false;
-function montarCss() {
+export function montarCss() {
   if (montado) return;
   montado = true;
   const style = document.createElement('style');

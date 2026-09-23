@@ -26,6 +26,7 @@ import { publishedStatus } from '../../domain/derive';
 import { abrirCandidato, abrirTabela } from '../../shell/tabela';
 import { fitaHtml, montarTransporte } from './fita';
 import { bancadasDe } from './bancadas';
+import { abrirBancadas } from './bancada';
 import { CSS } from './style';
 
 const app = document.getElementById('app')!;
@@ -403,7 +404,9 @@ async function main() {
         + `<span class="ap">—</span></header>`
         + `<div class="corpo"></div><p class="decide">—</p></section>`).join('')}</div>`
     + `<div class="cadeiras">${CADEIRAS.map(c =>
-        `<section data-c="${c.key}"><header><h2><button class="tudo">${esc(c.nome)}</button></h2><span class="ap">—</span></header>`
+        `<section data-c="${c.key}"><header><h2><button class="tudo">${esc(c.nome)}</button></h2>`
+        + `<button class="cads" title="Cadeiras por partido">Cadeiras</button>`
+        + `<span class="ap">—</span></header>`
         + `<div class="corpo"></div><p class="decide">—</p></section>`).join('')}</div>`
     /*
      * O rodapé carrega o fio e, no canto, o relógio e o botão da TV — "TV" porque é o que se faz
@@ -601,6 +604,27 @@ async function main() {
     });
   };
 
+  /**
+   * As cadeiras de uma proporcional, desenhadas.
+   *
+   * Pede a lista inteira antes de abrir: a do snapshot vem cortada nas primeiras candidaturas, e
+   * somar votos de partido nela subestimaria toda bancada — que é a conta mais consequente do
+   * painel. Enquanto a lista não chega, nada é mostrado.
+   */
+  const abrirCadeiras = async (office: Office) => {
+    const race = snap?.races?.[office];
+    if (!race) return;
+    const completas = race.candidateCount && race.candidateCount > race.candidates.length
+      ? await listaCompleta(office).catch(() => [])
+      : [];
+    abrirBancadas({
+      titulo: [...CADEIRAS].find(x => x.key === office)?.nome ?? office,
+      subtitulo: `${stateName(UF)} · ${fmtPercent(race.countedPercent, 1)} apurado`,
+      race,
+      candidatos: completas.length ? completas : race.candidates,
+    });
+  };
+
   /** A lista inteira de uma disputa, que o snapshot não carrega por peso. */
   const listaCompleta = async (office: Office): Promise<Candidate[]> => {
     const r = await fetch(`/api/race?mode=${MODE}&uf=${UF}&turn=${TURN}&office=${office}`, { cache: 'no-store' });
@@ -622,6 +646,12 @@ async function main() {
 
   palco.addEventListener('click', e => {
     const alvo = e.target as HTMLElement;
+    const cadeiras = alvo.closest('.cads');
+    if (cadeiras) {
+      const office = cadeiras.closest('section')?.getAttribute('data-c') as Office | null;
+      if (office) void abrirCadeiras(office);
+      return;
+    }
     const titulo = alvo.closest('.tudo');
     if (titulo) {
       const office = titulo.closest('section')?.getAttribute('data-c') as Office | null;

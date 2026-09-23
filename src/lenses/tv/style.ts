@@ -104,6 +104,18 @@ export const CSS = `
     font-size: clamp(14px, 1.35vw, 28px); letter-spacing: .12em; text-transform: uppercase; color: #f6f3ec; }
   /* o apurado em branco suave: é dado de cabeçalho, não um alerta — amarelo aqui só fazia barulho */
   .noite .ap { font-size: clamp(11px, .95vw, 19px); color: #cdc9c1; font-variant-numeric: tabular-nums; }
+  /*
+   * O botao que abre as cadeiras desenhadas, ao lado do titulo dos deputados.
+   *
+   * Fica discreto: quem assiste de longe le o painel, e este botao e para quem chegou perto e quer
+   * a repartição por partido. O margin-right auto empurra o apurado de volta para a direita.
+   */
+  .noite .cads { all: unset; cursor: pointer; margin-right: auto; margin-left: .7vw;
+    padding: .2vh .55vw; border: 1px solid #2c312e; border-radius: 3px;
+    font-size: clamp(9px, .72vw, 14px); letter-spacing: .1em; text-transform: uppercase;
+    color: #9aa3ab; white-space: nowrap; }
+  .noite .cads:hover, .noite .cads:focus-visible { color: #f6f3ec; border-color: #4a534e; }
+
   /* o alternador do painel da presidência: país ou estado, a mesma disputa por dois denominadores */
   .escopo { display: inline-flex; gap: 1px; margin-right: auto; margin-left: .8vw;
     border: 1px solid #262c2a; border-radius: 3px; overflow: hidden; }
