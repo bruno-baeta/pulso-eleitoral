@@ -59,6 +59,14 @@ interface Job {
   status: MunicipalPayload['status']; message: string;
   muns: MunRef[]; rows: Map<string, Row>; names: Map<string, string>;
   version: number; sourceAt: string | null; lastRequest: number; running: boolean;
+  /**
+   * Quando uma tela pediu este cargo de verdade — não quando ele foi aquecido de fundo.
+   *
+   * `lastRequest` serve para saber que alguém ainda está por perto e vale manter o job vivo; o
+   * aquecimento também o renova, senão o job morreria sozinho. Mas quem manda na fila é a tela, e
+   * misturar os dois faria o aquecimento roubar a vez do cargo que está aberto.
+   */
+  pedidoEm: number;
   /** Live delta: last UF progress stamp per TSE municipality (uf+cd), the stamp each city was fetched at, and which UF files were read. */
   stamps: Map<string, AbCity>; fetched: Map<string, string>; abSeen: Set<string>; abRotation: number; fetches: number;
   body?: { version: number; namesAt: number; payload: MunicipalPayload };
@@ -168,18 +176,25 @@ export class MunicipalService {
     const key = `${mode}:${turn}:${area}:${office}`;
     let job = this.jobs.get(key);
     if (!job) {
-      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0 };
+      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0 };
       this.jobs.set(key, job);
       if (mode === 'historico') await this.loadBuilt(job);
     }
     job.lastRequest = Date.now();
+    job.pedidoEm = job.lastRequest;
     if (area === 'BR') job.focus = uf;
     if (mode === 'historico') this.interest.add(`${mode}:${uf}`);
     this.hooks.touch(mode, uf, turn);
-    // Every office is a separate file per city at the TSE, so switching tabs would start a new download.
-    // Once the office on screen is complete, the others are fetched in the background for this state,
-    // so the next tab opens ready. They keep going while this view is being used.
-    if (job.rows.size >= job.muns.length && job.muns.length) this.warmSiblings(mode, uf, turn, office);
+    /*
+     * Os outros cargos do estado começam a ser preparados junto, não depois.
+     *
+     * Cada cargo é um arquivo por cidade no TSE, então cada um tem a sua varredura de 853 — e ela
+     * só começava quando alguém abria aquela aba, o que fazia a primeira abertura de cada cargo
+     * esperar cerca de um minuto. Criados agora, eles entram na fila e a própria ordem de
+     * prioridade resolve: o cargo que está na tela leva a faixa inteira, e quando ele fecha a vez
+     * passa sozinha para os irmãos, que chegam prontos.
+     */
+    this.warmSiblings(mode, uf, turn, office);
     if (!job.running && !(mode === 'historico' && job.status === 'ready')) void this.run(job);
     if (since !== undefined && since === job.version && job.body) {
       return { unchanged: true, status: job.status, message: job.message, loaded: job.muns.length ? Math.min(job.rows.size, job.muns.length) : 0, total: job.muns.length, version: job.version };
@@ -195,7 +210,7 @@ export class MunicipalService {
       const key = `${mode}:${turn}:${area}:${office}`;
       let job = this.jobs.get(key);
       if (!job) {
-        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0 };
+        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0 };
         this.jobs.set(key, job);
         if (mode === 'historico') void this.loadBuilt(job).then(() => { if (!job!.running && job!.status !== 'ready') void this.run(job!); });
         else void this.run(job);
@@ -288,7 +303,7 @@ export class MunicipalService {
           const key = `historico:${turn}:${area}:${office}`;
           let job = this.jobs.get(key);
           if (!job) {
-            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0 };
+            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0 };
             this.jobs.set(key, job);
             await this.loadBuilt(job);
           }
@@ -523,7 +538,8 @@ export class MunicipalService {
     for (const j of this.jobs.values()) {
       if (agora - j.lastRequest > KEEPALIVE) continue;                 // ninguém está olhando para este
       if (j.muns.length && j.rows.size >= j.muns.length) continue;     // já completo: não disputa
-      if (!melhor || j.lastRequest > melhor.lastRequest) melhor = j;
+      // A ordem é a do pedido da tela. Um cargo só aquecido tem `pedidoEm` zero e espera a vez.
+      if (!melhor || j.pedidoEm > melhor.pedidoEm) melhor = j;
     }
     return melhor === null || melhor === job;
   }

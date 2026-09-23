@@ -242,3 +242,23 @@ export const ELECTION_DATES: Record<Turn, string> = {
   2: '2026-10-25T17:00:00-03:00',
 };
 export const TSE_DOCS = 'https://www.tse.jus.br/eleicoes/informacoes-tecnicas-sobre-a-divulgacao-de-resultados';
+
+/*
+ * A disputa inteira no fio, com as candidaturas em listas posicionais.
+ *
+ * Uma proporcional tem mais de mil e quinhentas candidaturas, e como objeto JSON cada uma repete
+ * os nove nomes de campo: medido em Minas, 282 KB no deputado estadual e 211 KB no federal, dos
+ * quais quase metade eram as chaves. Pela rede de casa isso é o intervalo entre abrir a tabela e
+ * ela mostrar a lista inteira. A ordem abaixo é o contrato; mexer nela é mexer nos dois lados.
+ */
+export const CAMPOS_CANDIDATURA = ['id', 'name', 'number', 'party', 'votes', 'percent', 'elected', 'status', 'color'] as const;
+export type CandidaturaCompacta = [string, string, string, string, number, number, 0 | 1, string, string];
+
+export function compactarCandidatura(c: Candidate): CandidaturaCompacta {
+  return [c.id, c.name, c.number, c.party, c.votes, c.percent, c.elected ? 1 : 0, c.status, c.color];
+}
+
+export function expandirCandidatura(l: CandidaturaCompacta): Candidate {
+  const [id, name, number, party, votes, percent, elected, status, color] = l;
+  return { id, name, number, party, votes, percent, elected: elected === 1, status, color };
+}

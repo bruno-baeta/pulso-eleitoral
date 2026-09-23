@@ -11,6 +11,7 @@ import { createServer } from 'node:net';
 import { request as pedirHttp } from 'node:http';
 import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { CAMPOS_CANDIDATURA, expandirCandidatura, type CandidaturaCompacta } from '../shared/types.ts';
 
 const raiz = fileURLToPath(new URL('..', import.meta.url));
 
@@ -26,9 +27,17 @@ interface Snapshot {
   presidentUf?: DisputaNoFio;
   connection: { status: string; message: string };
 }
+/**
+ * A disputa vem com as candidaturas em listas posicionais (ver CAMPOS_CANDIDATURA).
+ *
+ * Numa proporcional são mais de mil e quinhentas, e como objeto os nove nomes de campo repetidos
+ * eram quase metade do peso da resposta.
+ */
 interface Disputa {
   office: string; uf: string; turn: number;
-  countedPercent: number; seats: number; validVotes: number; candidates: Candidatura[];
+  countedPercent: number; seats: number; validVotes: number;
+  campos: readonly string[];
+  candidates: CandidaturaCompacta[];
 }
 interface Timeline { available: boolean; reason?: string; start: number; end: number; live: boolean; now: number }
 interface Serie {
@@ -165,7 +174,23 @@ test('a rota da disputa traz a lista inteira, que o snapshot corta em 300', asyn
   assert.equal(disputa.candidates.length, noSnapshot.candidateCount, 'o snapshot anuncia quantas ficaram de fora');
   assert.equal(disputa.office, 'federal');
   assert.equal(disputa.uf, 'MG');
-  assert.deepEqual(disputa.candidates.slice(0, 5).map(c => c.id), noSnapshot.candidates.slice(0, 5).map(c => c.id));
+  assert.deepEqual(disputa.campos, [...CAMPOS_CANDIDATURA], 'o contrato das colunas vai junto na resposta');
+  const expandidas = disputa.candidates.map(expandirCandidatura);
+  assert.deepEqual(expandidas.slice(0, 5).map(c => c.id), noSnapshot.candidates.slice(0, 5).map(c => c.id));
+  const primeira = expandidas[0];
+  assert.equal(typeof primeira.name, 'string');
+  assert.equal(typeof primeira.votes, 'number');
+  assert.equal(typeof primeira.elected, 'boolean', 'o 0/1 do fio volta a ser booleano ao expandir');
+});
+
+test('a lista posicional é bem menor que a mesma lista em objetos', async () => {
+  const resposta = await fetch(`${base()}/api/race?mode=historico&uf=MG&turn=1&office=federal`);
+  const compacta = await resposta.text();
+  const disputa = JSON.parse(compacta) as Disputa;
+  const emObjetos = JSON.stringify({ ...disputa, campos: undefined, candidates: disputa.candidates.map(expandirCandidatura) });
+  assert.ok(disputa.candidates.length > 1000, 'a federal de Minas tem mais de mil candidaturas');
+  assert.ok(compacta.length < emObjetos.length * 0.7,
+    `a compacta devia ser bem menor: ${compacta.length} contra ${emObjetos.length}`);
 });
 
 test('uma disputa que não foi publicada responde 404', async () => {

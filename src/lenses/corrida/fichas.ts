@@ -8,7 +8,7 @@
  *
  * Elas não guardam estado do painel: recebem o snapshot que está no ar e o cargo, e se viram.
  */
-import type { Office, Snapshot, WireRace as Race } from '../../../shared/types';
+import { expandirCandidatura, type CandidaturaCompacta, type Office, type Snapshot, type WireRace as Race } from '../../../shared/types';
 import type { RankedCandidate } from '../../domain/derive';
 import { MODE, TURN, UF, all, contestedSeats, el, esc, fmtInt, fmtPercent, fold, initials, party, photoUrl, seatsByParty, stateName, titleCase } from '../../shell/dados';
 import { colorOf } from './cores';
@@ -108,9 +108,10 @@ export function abrirTabela(snap: Snapshot, office: Office, query = '', highligh
   if (race?.candidateCount && race.candidateCount > race.candidates.length) {
     const escopo = scoped && scoped.uf !== 'BR' ? `&scope=${scoped.uf}` : '';
     void fetch(`/api/race?mode=${MODE}&uf=${UF}&turn=${TURN}&office=${office}${escopo}`, { cache: 'no-store' })
-      .then(r => r.ok ? r.json() as Promise<{ candidates: Race['candidates'] }> : null)
-      .then(full => {
-        if (!full || !modal.isConnected || !race) return;
+      .then(r => r.ok ? r.json() as Promise<{ candidates: CandidaturaCompacta[] }> : null)
+      .then(resposta => {
+        if (!resposta || !modal.isConnected || !race) return;
+        const full = { candidates: resposta.candidates.map(expandirCandidatura) };
         race = { ...race, candidates: full.candidates, candidateCount: undefined };
         sheet.querySelector('.s')!.textContent = `${sheet.querySelector('.s')!.textContent!.replace(/· \d[\d.]* candidaturas$/, '')}· ${fmtInt(full.candidates.length)} candidaturas`;
         draw();

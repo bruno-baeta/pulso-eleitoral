@@ -7,7 +7,7 @@ import { loadEnvFile } from 'node:process';
 import { registrarCompressao, contentTag } from './compress.ts';
 import { Collector } from './collector.ts';
 import { MunicipalService } from './municipal.ts';
-import { STATES, type Mode, type Office, type Turn } from '../shared/types.ts';
+import { CAMPOS_CANDIDATURA, compactarCandidatura, STATES, type Mode, type Office, type Turn } from '../shared/types.ts';
 
 try { loadEnvFile(); } catch { /* .env is optional. */ }
 /*
@@ -118,7 +118,9 @@ app.get<{ Querystring: Query & { office: Office; scope?: string } }>('/api/race'
   const race = collector.fullRace(mode, uf, turn, office, scope);
   if (!race) return reply.code(404).send({ error: 'Disputa ainda não publicada.' });
   reply.header('Cache-Control', 'no-store');
-  return { office: race.office, uf: race.uf, turn: race.turn, countedPercent: race.countedPercent, seats: race.seats, validVotes: race.validVotes, candidates: race.candidates };
+  // Candidaturas em listas posicionais (ver CAMPOS_CANDIDATURA): numa proporcional os nomes de
+  // campo repetidos mil e setecentas vezes eram quase metade do peso da resposta.
+  return { office: race.office, uf: race.uf, turn: race.turn, countedPercent: race.countedPercent, seats: race.seats, validVotes: race.validVotes, campos: CAMPOS_CANDIDATURA, candidates: race.candidates.map(compactarCandidatura) };
 });
 
 /** Time series of one race for the line charts, built from the local recording. */

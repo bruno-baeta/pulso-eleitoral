@@ -18,7 +18,7 @@
 import '@fontsource-variable/dm-sans/wght.css';
 import '@fontsource/barlow-condensed/600.css';
 import '@fontsource/barlow-condensed/700.css';
-import type { Candidate, Office, WireRace as Race, Snapshot } from '../../../shared/types';
+import { expandirCandidatura, type Candidate, type CandidaturaCompacta, type Office, type WireRace as Race, type Snapshot } from '../../../shared/types';
 import { MODE, TURN, UF, esc, fmtInt, fmtPercent, loadSnapshot, onSnapshot, stateName } from '../../shell/dados';
 import { mountShellBar, pageReady } from '../../shell/shell';
 import { seedScale } from '../../shell/row';
@@ -605,7 +605,7 @@ async function main() {
   const listaCompleta = async (office: Office): Promise<Candidate[]> => {
     const r = await fetch(`/api/race?mode=${MODE}&uf=${UF}&turn=${TURN}&office=${office}`, { cache: 'no-store' });
     if (!r.ok) return [];
-    return (await r.json() as { candidates: Candidate[] }).candidates;
+    return (await r.json() as { candidates: CandidaturaCompacta[] }).candidates.map(expandirCandidatura);
   };
 
   /** As cidades de uma candidatura: onde os votos dela foram dados. */
