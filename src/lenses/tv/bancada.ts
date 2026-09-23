@@ -61,32 +61,41 @@ export function abrirBancadas(o: BancadaOpcoes) {
   const qe = Math.round(quocienteEleitoral(o.race.validVotes, o.race.seats));
   const til = projetada ? '~' : '';
   const totalCadeiras = bancadas.reduce((t, b) => t + b.cadeiras, 0);
-  const semCadeira = bancadas.filter(b => b.cadeiras === 0).length;
 
   /*
-   * Uma bolinha por vaga, agrupadas por partido.
+   * Cada vaga com o nome de quem a ocupa — quando há nome.
    *
-   * Sem hemiciclo: o arco é bonito e mente sobre a ordem — ele sugere uma posição no plenário que
-   * a apuração não define. Fileiras por partido dizem a mesma coisa sem inventar geografia.
+   * Quem senta é quem o TSE elege, e é só isso que aparece escrito. Enquanto a bancada é projeção
+   * pelo quociente, sabemos quantas cadeiras um partido faz e **não** sabemos quem: a lei ainda
+   * exige que a candidatura alcance 10% do quociente, e a fila interna do partido depende disso.
+   * Nesse estado as vagas saem como bolinhas vazadas, sem nome, e a folha diz por quê.
    */
-  const desenho = bancadas.filter(b => b.cadeiras > 0).map(b =>
-    `<div class="grupo">`
-    + `<div class="assentos">${Array.from({ length: b.cadeiras }, () =>
-        `<i class="assento${projetada ? ' previsto' : ''}" style="--cor:${esc(b.cor)}"></i>`).join('')}</div>`
-    + `<div class="sigla"><span style="--cor:${esc(b.cor)}">${esc(b.partido)}</span> <b>${til}${b.cadeiras}</b></div>`
-    + `</div>`).join('');
+  const eleitosDe = new Map<string, Candidate[]>();
+  for (const c of o.candidatos) {
+    if (!c.elected) continue;
+    const lista = eleitosDe.get(c.party) ?? [];
+    lista.push(c);
+    eleitosDe.set(c.party, lista);
+  }
+  for (const lista of eleitosDe.values()) lista.sort((a, b) => b.votes - a.votes);
 
-  const linhas = bancadas.map(b => {
+  const desenho = bancadas.filter(b => b.cadeiras > 0).map(b => {
     const votos = votosDe(b.partido);
-    const porCadeira = b.cadeiras ? Math.round(votos / b.cadeiras) : null;
-    const doQuociente = qe > 0 ? votos / qe * 100 : 0;
-    return `<tr${b.cadeiras ? '' : ' class="fora"'}>`
-      + `<td><i class="pt" style="background:${esc(b.cor)}"></i>${esc(b.partido)}</td>`
-      + `<td class="r">${fmtInt(votos)}</td>`
-      + `<td class="r">${o.race.validVotes ? fmtPercent(votos / o.race.validVotes * 100, 2) : '—'}</td>`
-      + `<td class="r">${qe > 0 ? fmtPercent(doQuociente, 0) : '—'}</td>`
-      + `<td class="r"><b>${b.cadeiras ? `${til}${b.cadeiras}` : '—'}</b></td>`
-      + `<td class="r">${porCadeira ? fmtInt(porCadeira) : '—'}</td></tr>`;
+    const doQuociente = qe > 0 ? ` · ${fmtPercent(votos / qe * 100, 0)} do quociente` : '';
+    const eleitos = eleitosDe.get(b.partido) ?? [];
+    const corpo = eleitos.length
+      ? `<ol class="eleitos">${eleitos.map(c =>
+          `<li><i class="assento" style="--cor:${esc(b.cor)}"></i>`
+          + `<span class="nm">${esc(c.name)}</span>`
+          + `<em>${fmtInt(c.votes)}</em></li>`).join('')}</ol>`
+      : `<div class="assentos">${Array.from({ length: b.cadeiras }, () =>
+          `<i class="assento previsto" style="--cor:${esc(b.cor)}"></i>`).join('')}</div>`;
+    return `<div class="grupo">`
+      + `<div class="cab"><span class="sg" style="--cor:${esc(b.cor)}">${esc(b.partido)}</span>`
+      + `<b>${til}${b.cadeiras}</b> ${b.cadeiras === 1 ? 'cadeira' : 'cadeiras'}</div>`
+      + `<div class="vts">${fmtInt(votos)} votos nominais${doQuociente}</div>`
+      + corpo
+      + `</div>`;
   }).join('');
 
   const fundo = document.createElement('div');
@@ -107,13 +116,7 @@ export function abrirBancadas(o: BancadaOpcoes) {
         : projetada
         ? `Projeção pelo quociente eleitoral sobre <b>${fmtPercent(o.race.countedPercent, 1)}</b> apurado — as bolinhas vazadas e o til dizem isso. O TSE ainda não publicou nenhum eleito nesta disputa.`
         : `Cadeiras publicadas pelo TSE: <b>${totalCadeiras}</b> de ${o.race.seats}.`}</p>`
-    + `<table><colgroup><col style="width:24%"><col style="width:17%"><col style="width:13%">`
-    + `<col style="width:16%"><col style="width:12%"><col style="width:18%"></colgroup>`
-    + `<thead><tr><th>Partido</th><th class="r">Votos nominais</th><th class="r">% válidos</th>`
-    + `<th class="r">Do quociente</th><th class="r">Cadeiras</th><th class="r">Votos por cadeira</th></tr></thead>`
-    + `<tbody>${linhas}</tbody></table>`
     + `<p class="nota">Voto nominal é a soma das candidaturas do partido; o voto de legenda, dado ao número do partido, não entra nesta conta. Um partido pode ficar abaixo do quociente e ainda assim eleger: as vagas que sobram da primeira distribuição vão por maiores médias, e disputa essas sobras quem tem ao menos 80% do quociente.</p>`
-    + (semCadeira ? `<p class="nota">${semCadeira} ${semCadeira === 1 ? 'partido não alcançou' : 'partidos não alcançaram'} o quociente e ${semCadeira === 1 ? 'fica' : 'ficam'} fora da distribuição.</p>` : '')
     + `</div>`
     + `<div class="pe">A ordem de votação não define as vagas proporcionais; quem senta é quem o TSE elege.</div>`
     + `</div>`;
@@ -148,14 +151,31 @@ const CSS = `
 /* Grade, nao linha solta: numa fileira as celulas tem a mesma altura, entao as siglas assentam
    todas na mesma base. Com flex, uma bancada que quebrava para a segunda fileira de bolinhas
    empurrava so a sigla dela para baixo e serrilhava a linha inteira. */
-.bnc .hemi { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(160px, 14vw, 250px), 1fr));
-  gap: 2.4vh 1.6vw; padding: 2.2vh 2.2vw 0; align-items: stretch; }
-.bnc .grupo { display: flex; flex-direction: column; justify-content: flex-end; gap: 1vh; }
-.bnc .assentos { display: flex; flex-wrap: wrap; align-content: flex-end; gap: 5px; }
+.bnc .hemi { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(230px, 20vw, 330px), 1fr));
+  gap: 1.6vh 1.2vw; padding: 2.2vh 2.2vw 0; align-items: start; }
+.bnc .grupo { display: flex; flex-direction: column; gap: .7vh;
+  padding: 1.4vh 1.2vw; border: 1px solid #1c211f; border-radius: 4px; background: #0c0f0e; }
+.bnc .cab { display: flex; align-items: baseline; gap: .45em;
+  font-size: clamp(11px, .85vw, 16px); color: #6a6863; }
+.bnc .cab .sg { color: var(--cor); font-weight: 700; letter-spacing: .04em;
+  font-size: clamp(12px, .95vw, 18px); }
+.bnc .cab b { color: #f6f3ec; font-variant-numeric: tabular-nums; margin-left: auto; }
+.bnc .vts { font-size: clamp(9px, .72vw, 14px); color: #565954; margin-bottom: .5vh; }
+
+/* Uma linha por vaga, com o nome de quem senta. */
+.bnc ol.eleitos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .55vh; }
+.bnc ol.eleitos li { display: flex; align-items: center; gap: .5em;
+  font-size: clamp(10px, .8vw, 15px); color: #e8e4dc; }
+.bnc ol.eleitos .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bnc ol.eleitos em { margin-left: auto; font-style: normal; color: #8b8981;
+  font-variant-numeric: tabular-nums; font-size: .92em; }
+
+/* Projecao: so as vagas, sem nome — o TSE ainda nao disse quem senta. */
+.bnc .assentos { display: flex; flex-wrap: wrap; gap: 5px; margin-top: .3vh; }
 
 /* Cheia e cadeira publicada pelo TSE; vazada e projecao. A diferenca e de preenchimento, nao de
    tom, porque precisa ser visivel de longe. */
-.bnc .assento { width: clamp(13px, 1vw, 19px); aspect-ratio: 1; border-radius: 50%;
+.bnc .assento { width: clamp(9px, .72vw, 14px); aspect-ratio: 1; border-radius: 50%;
   background: var(--cor); flex: none; }
 .bnc .assento.previsto { background: transparent; box-shadow: inset 0 0 0 2px var(--cor); }
 
