@@ -16,6 +16,13 @@ import { montarCss } from '../../shell/tabela';
 import { bancadasDe, projetarEleitos, quocienteEleitoral } from './bancadas';
 
 export interface BancadaOpcoes {
+  /**
+   * Os votos de cada partido como a fonte publica, quando vêm.
+   *
+   * A lista de candidaturas pode chegar cortada — na reprodução são as 400 mais votadas —, e sem
+   * isto o quociente sai cheio contra bancadas somadas de um terço dos votos.
+   */
+  partidos?: { name: string; votes: number }[];
   titulo: string;
   /** "Minas Gerais · 74,0% apurado" — o mesmo subtítulo dos outros modais. */
   subtitulo: string;
@@ -29,140 +36,166 @@ export function abrirBancadas(o: BancadaOpcoes) {
   montarEstilo();
   document.querySelector('.tbl-fundo')?.remove();
 
-  /*
-   * Sem voto apurado não há o que projetar.
-   *
-   * Com os válidos em zero o quociente é zero, todo partido "alcança" o quociente e as maiores
-   * médias repartem as vagas entre listas vazias: setenta e sete bolinhas desenhadas a partir de
-   * nada. Verificado no simulado das 14h de 23/09/2026, com a apuração em 0,0%. A folha abre
-   * dizendo que a apuração não começou, que é a única coisa verdadeira nesse instante.
-   */
-  const semApuracao = o.race.validVotes <= 0 || o.race.countedPercent <= 0;
-  const { bancadas, projetada } = semApuracao
-    ? { bancadas: [], projetada: true }
-    : bancadasDe(o.candidatos, o.race.seats, o.race.validVotes);
-  /*
-   * Os votos do partido, e não os dos eleitos dele.
-   *
-   * `bancadasDe` soma só as candidaturas eleitas quando o TSE já publicou eleitos — o que é certo
-   * para contar cadeiras e errado para exibir como "votos do partido". A primeira versão desta
-   * folha mostrou o Solidariedade com 86.042 votos e uma cadeira, contra um quociente de 210.964:
-   * aquilo eram os votos pessoais do único eleito, não do partido, que fez 178.969. Número na tela
-   * com rótulo que quer dizer outra coisa é a mesma família de erro que a regra 2 existe para
-   * impedir.
-   *
-   * Isto ainda é o voto **nominal** — a soma das candidaturas. O voto de legenda, dado ao número do
-   * partido, não vem na lista de candidatos: nesta disputa são 343.691 votos, 3% dos válidos.
-   */
-  const nominais = new Map<string, number>();
-  for (const c of o.candidatos) nominais.set(c.party, (nominais.get(c.party) ?? 0) + c.votes);
-  const votosDe = (partido: string) => nominais.get(partido) ?? 0;
-
-  const qe = Math.round(quocienteEleitoral(o.race.validVotes, o.race.seats));
-  const til = projetada ? '~' : '';
-  const totalCadeiras = bancadas.reduce((t, b) => t + b.cadeiras, 0);
-
-  /*
-   * Cada vaga com o nome de quem a ocupa — quando há nome.
-   *
-   * Quem senta é quem o TSE elege, e é só isso que aparece escrito. Enquanto a bancada é projeção
-   * pelo quociente, sabemos quantas cadeiras um partido faz e **não** sabemos quem: a lei ainda
-   * exige que a candidatura alcance 10% do quociente, e a fila interna do partido depende disso.
-   * Nesse estado as vagas saem como bolinhas vazadas, sem nome, e a folha diz por quê.
-   */
-  const ocupantesDe = new Map<string, Candidate[]>();
-  const semNomeDe = new Map<string, number>();
-  if (projetada) {
-    /*
-     * A projeção também diz quem, e a regra é o art. 108 do Código Eleitoral: entre as candidaturas
-     * do partido com ao menos 10% do quociente, elegem-se as mais votadas, até o número de cadeiras
-     * que o partido fez. Vaga sem candidatura apta fica sem nome — ela volta para a redistribuição
-     * do art. 109, §2º, e inventar um nome ali seria dizer que alguém se elegeu sem base.
-     */
-    for (const p of projetarEleitos(o.candidatos, bancadas, qe)) {
-      ocupantesDe.set(p.partido, p.ocupantes);
-      semNomeDe.set(p.partido, p.semNome);
-    }
-  } else {
-    for (const c of o.candidatos) {
-      if (!c.elected) continue;
-      const lista = ocupantesDe.get(c.party) ?? [];
-      lista.push(c);
-      ocupantesDe.set(c.party, lista);
-    }
-    for (const lista of ocupantesDe.values()) lista.sort((a, b) => b.votes - a.votes);
-  }
-
-  const desenho = bancadas.filter(b => b.cadeiras > 0).map(b => {
-    const votos = votosDe(b.partido);
-    const ocupantes = ocupantesDe.get(b.partido) ?? [];
-    const semNome = semNomeDe.get(b.partido) ?? Math.max(0, b.cadeiras - ocupantes.length);
-    /*
-     * Partido sem nenhum nome apto volta a ser bolinha, e não uma lista repetindo a mesma frase.
-     *
-     * Cedo na apuração isso é o normal: com o voto espalhado por mil e seiscentas candidaturas,
-     * ninguém tem 10% do quociente ainda. Visto no simulado das 14h — setenta e sete linhas
-     * iguais dizendo a mesma coisa, que é ruído no lugar de informação. O porquê fica dito uma vez
-     * só, no rodapé, com o número do piso.
-     */
-    const corpo = !ocupantes.length
-      ? `<div class="assentos">${Array.from({ length: b.cadeiras }, () =>
-          `<i class="assento previsto" style="--cor:${esc(b.cor)}"></i>`).join('')}</div>`
-      : `<ol class="eleitos">${ocupantes.map(c =>
-        `<li><i class="assento${projetada ? ' previsto' : ''}" style="--cor:${esc(b.cor)}"></i>`
-        + `<span class="nm">${esc(c.name)}</span>`
-        + `<em>${fmtInt(c.votes)}</em></li>`).join('')}`
-      + Array.from({ length: semNome }, () =>
-        `<li class="anonima"><i class="assento previsto" style="--cor:${esc(b.cor)}"></i>`
-        + `<span class="nm">vaga ainda sem candidatura apta</span></li>`).join('')
-      + `</ol>`;
-    return `<div class="grupo">`
-      + `<div class="cab"><span class="sg" style="--cor:${esc(b.cor)}">${esc(b.partido)}</span>`
-      + `<b>${til}${b.cadeiras}</b> ${b.cadeiras === 1 ? 'cadeira' : 'cadeiras'}</div>`
-      + `<div class="vts">${fmtInt(votos)} votos nominais</div>`
-      + corpo
-      + `</div>`;
-  }).join('');
-
   const fundo = document.createElement('div');
   fundo.className = 'tbl-fundo';
-  fundo.innerHTML = `<div class="tbl-folha bnc" role="dialog" aria-label="Cadeiras por partido">`
-    + `<header><div><div class="t">${esc(o.titulo)} · cadeiras</div>`
-    + `<div class="s">${esc(o.subtitulo)} · ${o.race.seats} vagas · ${bancadas.length} partidos</div></div>`
-    + `<button aria-label="Fechar">✕</button></header>`
-    + `<div class="rolo">`
-    + (desenho
-      ? `<div class="hemi">${desenho}</div>`
-      : `<p class="vazio">${semApuracao ? 'A apuração desta disputa ainda não começou.' : 'Nenhuma cadeira definida ainda.'}</p>`)
-    /* Uma linha, não três. O til e a bolinha vazada já dizem "projeção"; repetir isso em prosa
-       comprida numa tela de apuração é ocupar o lugar das cadeiras, que são o assunto. */
-    + `<p class="estado">${semApuracao
-        ? 'As cadeiras aparecem quando o TSE publicar os primeiros votos válidos.'
-        : projetada
-        ? `<b>Projeção</b> sobre ${fmtPercent(o.race.countedPercent, 1)} apurado · o TSE ainda não elegeu ninguém`
-        : `<b>Publicado pelo TSE</b> · ${totalCadeiras} de ${o.race.seats} cadeiras definidas`}</p>`
+
+  /*
+   * O conteúdo é repintado, não remontado.
+   *
+   * Com o modal aberto a apuração continua andando, e ele ficava parado no retrato de quando foi
+   * aberto — cadeiras de um minuto atrás por cima de um painel que já tinha mudado. A rolagem é
+   * guardada e reposta, senão cada atualização jogaria quem está lendo de volta para o topo.
+   */
+  const pintar = (o: BancadaOpcoes) => {
+    const rolagem = fundo.querySelector('.rolo')?.scrollTop ?? 0;
     /*
-     * Os três números que explicam o desenho, e nada além.
+     * Sem voto apurado não há o que projetar.
      *
-     * Aqui havia quatro parágrafos com a lei inteira dentro. Ninguém lê isso numa tela de
-     * apuração, e eles ocupavam mais espaço que as cadeiras — que são o assunto. Sobram os três
-     * limiares que fazem a conta, cada um com uma linha do que é.
+     * Com os válidos em zero o quociente é zero, todo partido "alcança" o quociente e as maiores
+     * médias repartem as vagas entre listas vazias: setenta e sete bolinhas desenhadas a partir de
+     * nada. Verificado no simulado das 14h de 23/09/2026, com a apuração em 0,0%. A folha abre
+     * dizendo que a apuração não começou, que é a única coisa verdadeira nesse instante.
      */
-    + (semApuracao ? '' : `<dl class="regra">`
-      + `<div><dt>Quociente</dt><dd>${fmtInt(qe)}</dd><span>votos por cadeira</span></div>`
-      + `<div><dt>Disputa as sobras</dt><dd>${fmtInt(Math.round(qe * 0.8))}</dd><span>80% do quociente</span></div>`
-      + `<div><dt>Piso para ter nome</dt><dd>${fmtInt(Math.round(qe * 0.1))}</dd><span>10% do quociente</span></div>`
-      + `</dl>`)
-    + `</div>`
-    + `<div class="pe">A ordem de votação não define as vagas proporcionais; quem senta é quem o TSE elege.</div>`
-    + `</div>`;
+    const semApuracao = o.race.validVotes <= 0 || o.race.countedPercent <= 0;
+  /*
+   * Os votos de cada partido como a fonte publica, quando ela publica.
+   *
+   * A lista de candidaturas pode vir cortada — na reprodução são as 400 mais votadas, um terço dos
+   * votos numa proporcional. Somar os partidos a partir dela dava quociente cheio contra bancada
+   * pela metade: um partido com vaga onde havia seis.
+   */
+  const totaisDaFonte = new Map<string, number>((o.partidos ?? []).filter(p => p.name && p.votes > 0).map(p => [p.name, p.votes]));
+    const { bancadas, projetada } = semApuracao
+      ? { bancadas: [], projetada: true }
+      : bancadasDe(o.candidatos, o.race.seats, o.race.validVotes, totaisDaFonte);
+    /*
+     * Os votos do partido, e não os dos eleitos dele.
+     *
+     * `bancadasDe` soma só as candidaturas eleitas quando o TSE já publicou eleitos — o que é certo
+     * para contar cadeiras e errado para exibir como "votos do partido". A primeira versão desta
+     * folha mostrou o Solidariedade com 86.042 votos e uma cadeira, contra um quociente de 210.964:
+     * aquilo eram os votos pessoais do único eleito, não do partido, que fez 178.969. Número na tela
+     * com rótulo que quer dizer outra coisa é a mesma família de erro que a regra 2 existe para
+     * impedir.
+     *
+     * Isto ainda é o voto **nominal** — a soma das candidaturas. O voto de legenda, dado ao número do
+     * partido, não vem na lista de candidatos: nesta disputa são 343.691 votos, 3% dos válidos.
+     */
+    const nominais = new Map<string, number>();
+    for (const c of o.candidatos) nominais.set(c.party, (nominais.get(c.party) ?? 0) + c.votes);
+    const votosDe = (partido: string) => totaisDaFonte.get(partido) ?? nominais.get(partido) ?? 0;
+
+    const qe = Math.round(quocienteEleitoral(o.race.validVotes, o.race.seats));
+    const til = projetada ? '~' : '';
+    const totalCadeiras = bancadas.reduce((t, b) => t + b.cadeiras, 0);
+
+    /*
+     * Cada vaga com o nome de quem a ocupa — quando há nome.
+     *
+     * Quem senta é quem o TSE elege, e é só isso que aparece escrito. Enquanto a bancada é projeção
+     * pelo quociente, sabemos quantas cadeiras um partido faz e **não** sabemos quem: a lei ainda
+     * exige que a candidatura alcance 10% do quociente, e a fila interna do partido depende disso.
+     * Nesse estado as vagas saem como bolinhas vazadas, sem nome, e a folha diz por quê.
+     */
+    const ocupantesDe = new Map<string, Candidate[]>();
+    const semNomeDe = new Map<string, number>();
+    if (projetada) {
+      /*
+       * A projeção também diz quem, e a regra é o art. 108 do Código Eleitoral: entre as candidaturas
+       * do partido com ao menos 10% do quociente, elegem-se as mais votadas, até o número de cadeiras
+       * que o partido fez. Vaga sem candidatura apta fica sem nome — ela volta para a redistribuição
+       * do art. 109, §2º, e inventar um nome ali seria dizer que alguém se elegeu sem base.
+       */
+      for (const p of projetarEleitos(o.candidatos, bancadas, qe)) {
+        ocupantesDe.set(p.partido, p.ocupantes);
+        semNomeDe.set(p.partido, p.semNome);
+      }
+    } else {
+      for (const c of o.candidatos) {
+        if (!c.elected) continue;
+        const lista = ocupantesDe.get(c.party) ?? [];
+        lista.push(c);
+        ocupantesDe.set(c.party, lista);
+      }
+      for (const lista of ocupantesDe.values()) lista.sort((a, b) => b.votes - a.votes);
+    }
+
+    const desenho = bancadas.filter(b => b.cadeiras > 0).map(b => {
+      const votos = votosDe(b.partido);
+      const ocupantes = ocupantesDe.get(b.partido) ?? [];
+      const semNome = semNomeDe.get(b.partido) ?? Math.max(0, b.cadeiras - ocupantes.length);
+      /*
+       * Partido sem nenhum nome apto volta a ser bolinha, e não uma lista repetindo a mesma frase.
+       *
+       * Cedo na apuração isso é o normal: com o voto espalhado por mil e seiscentas candidaturas,
+       * ninguém tem 10% do quociente ainda. Visto no simulado das 14h — setenta e sete linhas
+       * iguais dizendo a mesma coisa, que é ruído no lugar de informação. O porquê fica dito uma vez
+       * só, no rodapé, com o número do piso.
+       */
+      const corpo = !ocupantes.length
+        ? `<div class="assentos">${Array.from({ length: b.cadeiras }, () =>
+            `<i class="assento previsto" style="--cor:${esc(b.cor)}"></i>`).join('')}</div>`
+        : `<ol class="eleitos">${ocupantes.map(c =>
+          `<li><i class="assento${projetada ? ' previsto' : ''}" style="--cor:${esc(b.cor)}"></i>`
+          + `<span class="nm">${esc(c.name)}</span>`
+          + `<em>${fmtInt(c.votes)}</em></li>`).join('')}`
+        + Array.from({ length: semNome }, () =>
+          `<li class="anonima"><i class="assento previsto" style="--cor:${esc(b.cor)}"></i>`
+          + `<span class="nm">vaga ainda sem candidatura apta</span></li>`).join('')
+        + `</ol>`;
+      return `<div class="grupo">`
+        + `<div class="cab"><span class="sg" style="--cor:${esc(b.cor)}">${esc(b.partido)}</span>`
+        + `<b>${til}${b.cadeiras}</b> ${b.cadeiras === 1 ? 'cadeira' : 'cadeiras'}</div>`
+        + `<div class="vts">${fmtInt(votos)} votos nominais</div>`
+        + corpo
+        + `</div>`;
+    }).join('');
+
+    fundo.innerHTML = `<div class="tbl-folha bnc" role="dialog" aria-label="Cadeiras por partido">`
+      + `<header><div><div class="t">${esc(o.titulo)} · cadeiras</div>`
+      + `<div class="s">${esc(o.subtitulo)} · ${o.race.seats} vagas · ${bancadas.length} partidos</div></div>`
+      + `<button aria-label="Fechar">✕</button></header>`
+      + `<div class="rolo">`
+      + (desenho
+        ? `<div class="hemi">${desenho}</div>`
+        : `<p class="vazio">${semApuracao ? 'A apuração desta disputa ainda não começou.' : 'Nenhuma cadeira definida ainda.'}</p>`)
+      /* Uma linha, não três. O til e a bolinha vazada já dizem "projeção"; repetir isso em prosa
+         comprida numa tela de apuração é ocupar o lugar das cadeiras, que são o assunto. */
+      + (semApuracao ? '' : `<p class="estado">${projetada
+          ? `<b>Projeção</b> sobre ${fmtPercent(o.race.countedPercent, 1)} apurado · o TSE ainda não elegeu ninguém`
+          : `<b>Publicado pelo TSE</b> · ${totalCadeiras} de ${o.race.seats} cadeiras definidas`}</p>`)
+      /*
+       * Os três números que explicam o desenho, e nada além.
+       *
+       * Aqui havia quatro parágrafos com a lei inteira dentro. Ninguém lê isso numa tela de
+       * apuração, e eles ocupavam mais espaço que as cadeiras — que são o assunto. Sobram os três
+       * limiares que fazem a conta, cada um com uma linha do que é.
+       */
+      + (semApuracao ? '' : `<dl class="regra">`
+        + `<div><dt>Quociente</dt><dd>${fmtInt(qe)}</dd><span>votos por cadeira</span></div>`
+        + `<div><dt>Disputa as sobras</dt><dd>${fmtInt(Math.round(qe * 0.8))}</dd><span>80% do quociente</span></div>`
+        + `<div><dt>Piso para ter nome</dt><dd>${fmtInt(Math.round(qe * 0.1))}</dd><span>10% do quociente</span></div>`
+        + `</dl>`)
+      + `</div>`
+      + `<div class="pe">A ordem de votação não define as vagas proporcionais; quem senta é quem o TSE elege.</div>`
+      + `</div>`;
+
+
+    const rolo = fundo.querySelector('.rolo');
+    if (rolo) rolo.scrollTop = rolagem;
+  };
+  pintar(o);
 
   const fechar = () => { fundo.remove(); removeEventListener('keydown', naTecla); };
   const naTecla = (e: KeyboardEvent) => { if (e.key === 'Escape') fechar(); };
   addEventListener('keydown', naTecla);
-  fundo.querySelector('header button')!.addEventListener('click', fechar);
-  fundo.addEventListener('click', e => { if (e.target === fundo) fechar(); });
+  fundo.addEventListener('click', e => {
+    const alvo = e.target as HTMLElement;
+    if (alvo === fundo || alvo.closest('header button')) fechar();
+  });
   document.body.appendChild(fundo);
+  /** Quem abriu mantém isto para repintar enquanto a apuração anda. */
+  return { atualizar: pintar, aberta: () => fundo.isConnected };
 }
 
 let posto = false;

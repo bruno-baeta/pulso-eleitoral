@@ -289,6 +289,22 @@ export class Collector {
     const area = (scope ?? (office === 'president' ? 'BR' : uf)).toUpperCase();
     return this.races.get(`${mode}:${turn}:${area}:${office}`);
   }
+  /**
+   * A disputa inteira como estava em `at`, da gravação.
+   *
+   * O modal de cadeiras da TV lia a corrida do instante reproduzido mas ia buscar a lista completa
+   * de candidaturas por outro caminho — este —, que só sabia devolver o ao vivo. O resultado era
+   * um modal com dezenas de partidos com cadeira enquanto o painel atrás mostrava dois: as vagas
+   * saíam dos votos finais, a apuração era a do minuto zero.
+   */
+  async fullRaceAt(mode: Mode, uf: string, turn: Turn, office: Office, at: number, scope?: string): Promise<Race | null> {
+    const area = (scope ?? (office === 'president' ? 'BR' : uf)).toUpperCase();
+    const key = mode === 'historico'
+      ? this.historicoKey(turn, office, area)
+      : Recorder.key(mode, this.session(mode as LiveMode), turn, area, office);
+    return key ? this.recorder.raceAt(key, at) : null;
+  }
+
   touch(mode: Mode, uf: string, turn: Turn) {
     this.touched.set(`${mode}:${turn}:${uf}`, { mode, uf, turn, until: Date.now() + 60_000 });
   }

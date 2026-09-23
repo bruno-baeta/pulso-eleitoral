@@ -52,7 +52,9 @@ async function servico(tse: TseFalso, extra: Partial<MunicipalHooks> = {}, relog
   const dir = await mkdtemp(join(tmpdir(), 'pulso-mun-'));
   const transporte = new TseTransport(500, tse.fetch, relogio);
   const servico = new MunicipalService(transporte, hooks(extra), dir, 0.01);
-  return { servico, transporte, dir, fechar: async () => { transporte.close(); await rm(dir, { recursive: true, force: true }); } };
+  // Encerrar antes de apagar: o serviço grava os instantes em disco, e apagar a pasta debaixo de
+  // uma escrita em curso derrubava testes com ENOTEMPTY, sem nada a ver com o que eles verificam.
+  return { servico, transporte, dir, fechar: async () => { await servico.encerrar(); transporte.close(); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); } };
 }
 
 const cidades = (p: MunicipalPayload | { unchanged: true }) => 'm' in p ? p.m.length : 0;
@@ -69,10 +71,19 @@ async function manterAberto(s: MunicipalService, mode: Mode, uf: string, turn: T
   while (Date.now() < fim) { await respirar(10); await s.get(mode, uf, turn, office); }
 }
 
-/** Pede até o job ficar pronto, ou desistir. Devolve o último payload. */
-async function ateFechar(s: MunicipalService, mode: Mode, uf: string, turn: Turn, office: Office, voltas = 60) {
+/**
+ * Pede até o job ficar pronto, ou o prazo acabar. Devolve o último payload.
+ *
+ * O teto é de tempo, não de número de voltas. Contando voltas, a espera total dependia de quanto o
+ * laço de eventos estava concorrido: com a suíte inteira em paralelo, sessenta voltas de trinta
+ * milissegundos passavam voando e o teste acusava um defeito que não existia. Com prazo, o teste
+ * fecha assim que a varredura fecha e só desiste depois de um tempo em que ela realmente deveria
+ * ter fechado.
+ */
+async function ateFechar(s: MunicipalService, mode: Mode, uf: string, turn: Turn, office: Office, prazoMs = 20_000) {
+  const limite = Date.now() + prazoMs;
   let ultimo = await s.get(mode, uf, turn, office);
-  for (let i = 0; i < voltas; i++) {
+  while (Date.now() < limite) {
     await respirar(6);
     ultimo = await s.get(mode, uf, turn, office);
     if ('status' in ultimo && ultimo.status === 'ready') break;
@@ -162,7 +173,7 @@ test('uma varredura de cada vez, e é a do cargo que está na tela', async () =>
     await s.get('simulado', 'MG', 1, 'senate');      // aquecido antes
     await respirar(4);
     await s.get('simulado', 'MG', 1, 'governor');    // este é o pedido da tela, e é o mais recente
-    const payload = await ateFechar(s, 'simulado', 'MG', 1, 'governor', 150);
+    const payload = await ateFechar(s, 'simulado', 'MG', 1, 'governor');
 
     assert.equal('status' in payload ? payload.status : '', 'ready', 'o cargo da tela precisa fechar');
     assert.equal(cidades(payload), 15);
@@ -242,7 +253,7 @@ test('o que foi varrido sobrevive a um processo novo', async () => {
     const relido = await depois.get('simulado', 'MG', 1, 'governor');
     assert.equal(cidades(relido), 11, 'as cidades voltaram do disco');
     assert.equal(mudo.pedidos.size, 0, 'e voltaram sem pedir nada ao TSE');
-  } finally { segundo.close(); await rm(dir, { recursive: true, force: true }); }
+  } finally { segundo.close(); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
 test('a gravação de uma sessão do simulado não ressuscita na sessão seguinte', async () => {
@@ -261,7 +272,7 @@ test('a gravação de uma sessão do simulado não ressuscita na sessão seguint
     const outra = new MunicipalService(t2, hooks({ session: () => '2026-09-23-14h', allowed: () => false }), dir, 0.01);
     const relido = await outra.get('simulado', 'MG', 1, 'governor');
     assert.equal(cidades(relido), 0, 'a sessão da tarde não herda os números da manhã');
-  } finally { t2.close(); await rm(dir, { recursive: true, force: true }); }
+  } finally { t2.close(); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
 test('o que veio do disco não passa por completo até a fonte confirmar', async () => {
@@ -300,7 +311,7 @@ test('o que veio do disco não passa por completo até a fonte confirmar', async
     await ateFechar(s, 'simulado', 'MG', 1, 'governor');
     assert.ok(tse.contar('-ab.json') > 0, 'o job foi mesmo falar com a fonte, e não ficou no disco');
     assert.ok(tse.contar('-c0003-e0') > 0, 'e com carimbo novo as cidades foram rebuscadas');
-  } finally { depois.close(); await rm(dir, { recursive: true, force: true }); }
+  } finally { depois.close(); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
 test('restart não rebusca cidade cujo carimbo não mudou', async () => {
@@ -327,7 +338,7 @@ test('restart não rebusca cidade cujo carimbo não mudou', async () => {
     await ateFechar(s, 'simulado', 'MG', 1, 'governor');
     assert.equal(tse.contar('-c0003-e0'), 0, 'nenhum arquivo de cidade foi pedido de novo');
     assert.ok(tse.contar('-ab.json') > 0, 'mas o andamento foi lido, que é onde a mudança apareceria');
-  } finally { depois.close(); await rm(dir, { recursive: true, force: true }); }
+  } finally { depois.close(); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
 /** Um TSE de Minas cujas cidades publicam o bloco de totais junto dos votos. */
@@ -395,7 +406,7 @@ test('cidade encerrada lida por um parser mais velho é rebuscada', async () => 
       assert.equal(t?.secoes, 6 * 20, 'e as seções voltaram do TSE');
       assert.equal(t?.brancos, 6 * 7);
     } finally { transporte.close(); }
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
 test('a tabela de um instante passado vem da gravação, não do estado de agora', async () => {
@@ -442,7 +453,7 @@ test('a tabela de um instante passado vem da gravação, não do estado de agora
     const passado = totaisDe(await s.get('simulado', 'MG', 1, 'governor', undefined, instante));
     assert.equal(passado?.nominais, 4 * 150, 'e o instante gravado mostra os de antes');
     assert.equal(passado?.cidades, 4, 'com as quatro cidades que já existiam ali');
-  } finally { transporte.close(); await rm(dir, { recursive: true, force: true }); }
+  } finally { transporte.close(); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
 test('um instante anterior a qualquer gravação devolve tabela vazia, não a de agora', async () => {
@@ -456,5 +467,5 @@ test('um instante anterior a qualquer gravação devolve tabela vazia, não a de
     const vazio = totaisDe(await s.get('simulado', 'MG', 1, 'governor', undefined, 1));
     assert.equal(vazio?.cidades, 0);
     assert.equal(vazio?.nominais, 0);
-  } finally { transporte.close(); await rm(dir, { recursive: true, force: true }); }
+  } finally { transporte.close(); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });

@@ -132,6 +132,8 @@ interface Job {
   lidaEm: Map<string, number>;
   /** Cidades que mudaram desde a última linha gravada, esperando virar um instante no disco. */
   mudadas: Map<string, Row>;
+  /** Quando a primeira delas foi lida. É esta a hora do instante, não a da escrita. */
+  mudadasDesde: number;
   /** Versão já gravada em disco, e quando — o que evita reescrever um megabyte a cada volta. */
   salvo: { version: number; em: number };
   /**
@@ -283,7 +285,7 @@ export class MunicipalService {
     const key = `${mode}:${turn}:${area}:${office}`;
     let job = this.jobs.get(key);
     if (!job) {
-      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
+      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), mudadasDesde: 0, abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
       this.jobs.set(key, job);
       await this.loadBuilt(job);
     }
@@ -324,7 +326,7 @@ export class MunicipalService {
       const key = `${mode}:${turn}:${area}:${office}`;
       let job = this.jobs.get(key);
       if (!job) {
-        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
+        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), mudadasDesde: 0, abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
         this.jobs.set(key, job);
         void this.loadBuilt(job).then(() => { if (!job!.running && job!.status !== 'ready') void this.run(job!); });
         continue;
@@ -416,7 +418,7 @@ export class MunicipalService {
           const key = `historico:${turn}:${area}:${office}`;
           let job = this.jobs.get(key);
           if (!job) {
-            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
+            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), mudadasDesde: 0, abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
             this.jobs.set(key, job);
             await this.loadBuilt(job);
           }
@@ -557,10 +559,11 @@ export class MunicipalService {
     const path = this.gravacaoPath(job);
     if (!path || !job.mudadas.size) return;
     const linhas = [...job.mudadas].map(([cdi, r]) => [cdi, r.vv, r.cand, r.vb ?? 0, r.vn ?? 0, r.tv ?? 0, r.st ?? 0, r.ts ?? 0]);
+    const t = job.mudadasDesde || Date.now();
     job.mudadas.clear();
     try {
       await mkdir(dirname(path), { recursive: true });
-      await appendFile(path, JSON.stringify({ t: Date.now(), r: linhas }) + '\n');
+      await appendFile(path, JSON.stringify({ t, r: linhas }) + '\n');
     } catch (e) { console.error('Municípios (instantes):', e instanceof Error ? e.message : e); }
   }
 
@@ -679,6 +682,9 @@ export class MunicipalService {
 
   /** Descarrega o que estiver pendente. O encerramento do processo não pode levar a varredura junto. */
   async encerrar() {
+    // Parar é parar: sem isto os laços seguiam escrevendo em disco depois do desligamento, e nos
+    // testes a pasta temporária era apagada por baixo de uma gravação em curso (ENOTEMPTY).
+    this.parado = true;
     for (const job of this.jobs.values()) { await this.gravarInstante(job); await this.talvezSalvar(job, true); }
   }
 
@@ -687,10 +693,12 @@ export class MunicipalService {
   }
 
   // --- collection ----------------------------------------------------------------------------
+  private parado = false;
+
   private async run(job: Job) {
     job.running = true;
     try {
-      while (Date.now() - job.lastRequest < KEEPALIVE) {
+      while (!this.parado && Date.now() - job.lastRequest < KEEPALIVE) {
         if (this.transport.cooldownUntil > Date.now()) {
           job.status = 'paused'; job.message = 'Consultas ao TSE pausadas após resposta do servidor. Retomada automática.';
           await this.pausa(Math.min(60_000, this.transport.cooldownUntil - Date.now())); continue;
@@ -1045,8 +1053,15 @@ export class MunicipalService {
     job.rows.set(cdi, nova);
     if (igual) return false;
     job.version++;
-    // A mudança entra na fila do gravador: é ela que permite remontar a tabela de qualquer
-    // instante depois, em vez de servir sempre o estado de agora.
+    /*
+     * A mudança entra na fila do gravador: é ela que permite remontar a tabela de qualquer
+     * instante depois, em vez de servir sempre o estado de agora.
+     *
+     * A hora do instante é a da leitura, não a da escrita. A gravação sai em lotes, e datar o lote
+     * pela escrita empurrava o dado para depois do momento em que ele já existia: quem pedisse
+     * aquele instante recebia uma tabela vazia de um minuto em que a tabela já tinha números.
+     */
+    if (!job.mudadas.size) job.mudadasDesde = Date.now();
     job.mudadas.set(cdi, nova);
     return true;
   }

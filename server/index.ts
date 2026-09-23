@@ -117,13 +117,18 @@ app.get<{ Querystring: { mode: Mode; uf: string; turn: Turn; office: Office; v?:
 });
 /** A disputa inteira, com todas as candidaturas: o que a tabela e a busca pedem ao abrir. */
 app.get<{ Querystring: Query & { office: Office; scope?: string } }>('/api/race', { schema: { querystring: { type: 'object', properties: { ...querySchema.properties, office: { type: 'string', enum: ['president', 'governor', 'senate', 'federal', 'state'] }, scope: { type: 'string', pattern: '^[A-Za-z]{2}$' } }, required: ['office'], additionalProperties: false } } }, async (request, reply) => {
-  const { mode, uf, turn, office, scope } = request.query;
-  const race = collector.fullRace(mode, uf, turn, office, scope);
+  const { mode, uf, turn, office, scope, at } = request.query;
+  // `at` é o instante reproduzido: a lista completa vem da gravação daquele momento, senão o modal
+  // de cadeiras monta as vagas com os votos finais por trás de um painel no minuto zero.
+  const race = at === undefined ? collector.fullRace(mode, uf, turn, office, scope)
+    : await collector.fullRaceAt(mode, uf, turn, office, at, scope);
   if (!race) return reply.code(404).send({ error: 'Disputa ainda não publicada.' });
   reply.header('Cache-Control', 'no-store');
   // Candidaturas em listas posicionais (ver CAMPOS_CANDIDATURA): numa proporcional os nomes de
   // campo repetidos mil e setecentas vezes eram quase metade do peso da resposta.
-  return { office: race.office, uf: race.uf, turn: race.turn, countedPercent: race.countedPercent, seats: race.seats, validVotes: race.validVotes, campos: CAMPOS_CANDIDATURA, candidates: race.candidates.map(compactarCandidatura) };
+  // Os partidos vão junto: numa proporcional a lista de candidaturas pode vir cortada, e é o total
+  // do partido que faz a conta de cadeiras fechar.
+  return { office: race.office, uf: race.uf, turn: race.turn, countedPercent: race.countedPercent, seats: race.seats, validVotes: race.validVotes, parties: race.parties, campos: CAMPOS_CANDIDATURA, candidates: race.candidates.map(compactarCandidatura) };
 });
 
 /** Time series of one race for the line charts, built from the local recording. */

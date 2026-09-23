@@ -5,7 +5,9 @@ import type { Candidate, Office, Party, Race, Turn } from '../shared/types.ts';
 /** [id, votes, percent, elected, status] */
 type Row = [string, number, number, 0 | 1, string];
 type RaceFields = Omit<Race, 'candidates' | 'parties' | 'history'>;
-interface Frame { at: number; race: RaceFields; rows: Row[] }
+/** [nome, votos, eleitos, cor] — o partido inteiro, não o que sobra das 400 linhas guardadas. */
+type PartyRow = [string, number, number, string];
+interface Frame { at: number; race: RaceFields; rows: Row[]; parties?: PartyRow[] }
 interface Track { names: Map<string, Pick<Candidate, 'id' | 'name' | 'number' | 'party' | 'color'>>; frames: Frame[]; lastAt: number }
 
 /** Legislative races keep the head of the list; the tail does not move the tracks. */
@@ -45,7 +47,16 @@ export class Recorder {
     const rows: Row[] = race.candidates.slice(0, ROWS).map(c => [c.id, c.votes, c.percent, c.elected ? 1 : 0, c.status]);
     const unknown = race.candidates.slice(0, ROWS).filter(c => !track.names.has(c.id)).map(c => ({ id: c.id, name: c.name, number: c.number, party: c.party, color: c.color }));
     const { candidates: _c, parties: _p, history: _h, ...fields } = race;
-    const frame: Frame = { at, race: fields, rows };
+    /*
+     * Os totais por partido vão gravados, e não recalculados da lista de candidaturas.
+     *
+     * Só as 400 mais votadas cabem aqui — numa proporcional isso é um terço dos votos. Somar os
+     * partidos a partir delas dava, na reprodução, quociente certo contra bancadas de um terço: o
+     * modal de cadeiras mostrava um único partido com vaga onde havia seis. São poucas dezenas de
+     * linhas por quadro, e são elas que fazem a conta de cadeiras fechar.
+     */
+    const parties: PartyRow[] = race.parties.map(p => [p.name, p.votes, p.elected, p.color]);
+    const frame: Frame = { at, race: fields, rows, parties };
     let lines = '';
     if (unknown.length) { for (const n of unknown) track.names.set(n.id, n); lines += JSON.stringify({ m: unknown }) + '\n'; }
     lines += JSON.stringify({ f: frame }) + '\n';
@@ -121,7 +132,11 @@ function build(track: Track, frame: Frame): Race {
     const n = track.names.get(id) ?? { id, name: id, number: '', party: '', color: '#8a94a6' };
     return { ...n, votes, percent, elected: elected === 1, status };
   });
-  return { ...frame.race, candidates, parties: partiesOf(candidates), history: [] };
+  // Quadro gravado antes de os partidos irem junto cai no cálculo antigo, que é o melhor que ele tem.
+  const parties: Party[] = frame.parties?.length
+    ? frame.parties.map(([name, votes, elected, color]) => ({ name, votes, elected, color }))
+    : partiesOf(candidates);
+  return { ...frame.race, candidates, parties, history: [] };
 }
 
 function zeroRace(race: Race): Race {

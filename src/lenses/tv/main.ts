@@ -516,6 +516,7 @@ async function main() {
       timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit',
     });
     animarTrocas(antes);
+    void repintarCadeiras();
   };
 
   /*
@@ -631,25 +632,58 @@ async function main() {
    * somar votos de partido nela subestimaria toda bancada — que é a conta mais consequente do
    * painel. Enquanto a lista não chega, nada é mostrado.
    */
-  const abrirCadeiras = async (office: Office) => {
+  /*
+   * O modal de cadeiras acompanha a apuração enquanto está aberto.
+   *
+   * Ele ficava parado no retrato de quando foi aberto: com a gravação rodando, o painel andava e
+   * as cadeiras não. `aberto` é o que `desenhar` procura para repintar.
+   */
+  let aberto: { office: Office; bancada: ReturnType<typeof abrirBancadas> } | null = null;
+
+  const opcoesCadeiras = async (office: Office) => {
     const race = snap?.races?.[office];
-    if (!race) return;
-    const completas = race.candidateCount && race.candidateCount > race.candidates.length
-      ? await listaCompleta(office).catch(() => [])
-      : [];
-    abrirBancadas({
+    if (!race) return null;
+    /*
+     * A lista completa é buscada sempre, não só quando o snapshot se declara truncado.
+     *
+     * O snapshot carrega um recorte da disputa; o cálculo de cadeiras precisa de todas as
+     * candidaturas, senão o quociente e as maiores médias são feitos sobre parte do voto. A
+     * condição antiga fazia o modal ora usar a lista inteira, ora o recorte, e o número de
+     * partidos com cadeira pulava sem a apuração ter mudado de verdade.
+     */
+    const completas = await listaCompleta(office).catch(() => []);
+    return {
       titulo: [...CADEIRAS].find(x => x.key === office)?.nome ?? office,
       subtitulo: `${stateName(UF)} · ${fmtPercent(race.countedPercent, 1)} apurado`,
       race,
       candidatos: completas.length ? completas : race.candidates,
-    });
+      partidos: partidosDaFonte,
+    };
+  };
+
+  const abrirCadeiras = async (office: Office) => {
+    const opcoes = await opcoesCadeiras(office);
+    if (!opcoes) return;
+    aberto = { office, bancada: abrirBancadas(opcoes) };
+  };
+
+  const repintarCadeiras = async () => {
+    if (!aberto) return;
+    if (!aberto.bancada.aberta()) { aberto = null; return; }
+    const opcoes = await opcoesCadeiras(aberto.office);
+    if (opcoes && aberto?.bancada.aberta()) aberto.bancada.atualizar(opcoes);
   };
 
   /** A lista inteira de uma disputa, que o snapshot não carrega por peso. */
+  let partidosDaFonte: { name: string; votes: number }[] = [];
   const listaCompleta = async (office: Office): Promise<Candidate[]> => {
-    const r = await fetch(`/api/race?mode=${MODE}&uf=${UF}&turn=${TURN}&office=${office}`, { cache: 'no-store' });
-    if (!r.ok) return [];
-    return (await r.json() as { candidates: CandidaturaCompacta[] }).candidates.map(expandirCandidatura);
+    // O instante vai junto: sem ele a lista voltava com os votos finais e o modal de cadeiras
+    // montava as vagas com eles, enquanto o painel atrás mostrava dois partidos.
+    const r = await fetch(`/api/race?mode=${MODE}&uf=${UF}&turn=${TURN}&office=${office}${momento == null ? '' : `&at=${Math.round(momento)}`}`, { cache: 'no-store' });
+    if (!r.ok) { partidosDaFonte = []; return []; }
+    const corpo = await r.json() as { candidates: CandidaturaCompacta[]; parties?: { name: string; votes: number }[] };
+    partidosDaFonte = corpo.parties ?? [];
+    return corpo.candidates.map(expandirCandidatura);
   };
 
   /** As cidades de uma candidatura: onde os votos dela foram dados. */

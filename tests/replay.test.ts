@@ -44,3 +44,34 @@ test('gravação reconstrói a apuração em qualquer instante, inclusive o inst
     assert.equal(r.candidates[0].name, race(0, 0, 0).candidates[0].name);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test('os totais por partido são gravados, e não recalculados da lista cortada', async () => {
+  /*
+   * O defeito, visto no modal de cadeiras da TV durante a reprodução: seis partidos com vaga aos
+   * 7% apurado viravam um só aos 20%. A gravação guarda as 400 candidaturas mais votadas, o que
+   * numa proporcional é cerca de um terço dos votos; o quociente saía dos votos válidos cheios e
+   * as bancadas, da lista cortada. Quociente inteiro contra bancada pela metade elege quase
+   * ninguém.
+   *
+   * Os partidos são poucas dezenas de linhas por quadro, e são eles que fazem a conta fechar.
+   */
+  const dir = await mkdtemp(join(tmpdir(), 'rec-'));
+  try {
+    const key = Recorder.key('simulado', 's1', 1, 'MG', 'federal');
+    const base = demoRace('federal', 'MG', 1, 10_000);
+    // A fonte publica 900.000 votos para o partido; a lista guardada só explica uma fração deles.
+    const publicado = {
+      ...base, receivedAt: 10_000, countedPercent: 20,
+      candidates: base.candidates.map((c, i) => ({ ...c, party: 'P 1', votes: i === 0 ? 1_000 : 0 })),
+      parties: [{ name: 'P 1', votes: 900_000, elected: 0, color: '#f4a400' }],
+    };
+    const rec = new Recorder(dir);
+    await rec.record(key, publicado);
+
+    const lido = (await new Recorder(dir).raceAt(key, 20_000))!;
+    const p1 = lido.parties.find(p => p.name === 'P 1');
+    assert.equal(p1?.votes, 900_000, 'o total do partido é o publicado, não a soma das linhas guardadas');
+    assert.ok(lido.candidates.reduce((t, c) => t + c.votes, 0) < 900_000,
+      'e a lista de candidaturas continua sendo o recorte — é justamente por isso que o total precisa vir à parte');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

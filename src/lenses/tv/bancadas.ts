@@ -89,10 +89,27 @@ export function projetarBancadas(bancadas: Bancada[], vagas: number, validos: nu
  * `projetada` diz qual dos dois está na tela — é o que faz o til aparecer ao lado do número, e
  * é a diferença entre relatar e estimar.
  */
-export function bancadasDe(candidatos: Candidatura[], vagas: number, validos: number): { bancadas: Bancada[]; projetada: boolean } {
+/**
+ * `totais` são os votos de cada partido como a fonte os publica.
+ *
+ * Sem eles a conta sai da lista de candidaturas, que numa proporcional pode vir cortada — na
+ * reprodução são as 400 mais votadas, um terço dos votos. Quociente cheio contra bancada pela
+ * metade elege um partido onde havia seis.
+ */
+export function bancadasDe(candidatos: Candidatura[], vagas: number, validos: number, totais?: Map<string, number>): { bancadas: Bancada[]; projetada: boolean } {
   const eleitos = candidatos.filter(c => c.elected);
   const projetada = eleitos.length === 0;
-  const contadas = porPartido(projetada ? candidatos : eleitos);
+  const daLista = porPartido(projetada ? candidatos : eleitos);
+  /*
+   * Com os totais da fonte, a lista de partidos é a deles — inclusive os que não têm nenhuma
+   * candidatura entre as guardadas. A lista de candidaturas serve para a cor e para os nomes.
+   */
+  const contadas = projetada && totais?.size
+    ? [...totais].map(([partido, votos]) => ({
+        partido, votos, cadeiras: 0,
+        cor: daLista.find(b => b.partido === partido)?.cor ?? '#8a94a6',
+      }))
+    : daLista;
   const total = Math.max(1, validos || contadas.reduce((t, b) => t + b.votos, 0));
   const bancadas = projetada ? projetarBancadas(contadas, vagas, total) : contadas;
   return {
