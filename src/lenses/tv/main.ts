@@ -3,12 +3,12 @@
  *
  * Duas formas, e a escolha entre elas é a tese da tela:
  *
- *   corrida  — presidente, governador e senado se decidem por votação, e o que importa é como a
- *              vantagem se move enquanto a apuração anda. Então são curvas: quem subiu, quem caiu,
- *              onde as linhas se cruzaram.
+ *   disputa  — presidente, governador e senado se decidem por votação: o que importa é quem está
+ *              na frente e por quanto. Então são três linhas de texto, com a etiqueta do que
+ *              mudou desde a leitura anterior e a linha de corte de quem continua vivo.
  *   cadeiras — deputado federal e estadual não se decidem por quem está na frente, e sim por
- *              quantas vagas cada partido tirou. Então são assentos, com o rosto de quem está
- *              sentado neles e as vagas ainda abertas como cadeiras vazias.
+ *              quantas vagas cada partido tirou. Então é a bancada de cada partido e a altura dos
+ *              cinco mais votados, que é onde o voto vira cadeira.
  *
  * Os mapas saíram. Por líder de município, uma proporcional com centenas de candidaturas vira
  * confete — quinhentas manchas de quinhentas cores que não respondem pergunta nenhuma —, e nas
@@ -19,11 +19,12 @@ import '@fontsource-variable/dm-sans/wght.css';
 import '@fontsource/barlow-condensed/600.css';
 import '@fontsource/barlow-condensed/700.css';
 import type { Candidate, Office, WireRace as Race, Snapshot } from '../../../shared/types';
-import { MODE, TURN, UF, esc, fmtInt, fmtPercent, loadSnapshot, loadTimeline, onSnapshot, stateName, type Timeline } from '../../raias/common';
+import { MODE, TURN, UF, esc, fmtInt, fmtPercent, loadSnapshot, onSnapshot, stateName } from '../../raias/common';
 import { mountShellBar, pageReady } from '../../shell/shell';
 import { seedScale } from '../../shell/row';
 import { publishedStatus } from '../../domain/derive';
 import { abrirCandidato, abrirTabela } from '../../shell/tabela';
+import { fitaHtml, montarTransporte } from './fita';
 import { CSS } from './style';
 
 const app = document.getElementById('app')!;
@@ -114,22 +115,6 @@ function registrarMovimento(office: Office, race: Race, ordem: Race['candidates'
     folgaAnterior.set(chave, folga);
   });
 }
-
-/**
- * As acelerações oferecidas, em minutos de apuração por segundo de relógio.
- *
- * 1× é o tempo real, para acompanhar um trecho de perto; 60× percorre uma hora por minuto, que é
- * o passo em que uma virada de madrugada cabe num intervalo; 100× atravessa a noite inteira em
- * poucos minutos, para quem quer só ver o desenho da apuração.
- */
-const VELOCIDADES = [1, 60, 100];
-
-/** Os três gestos do transporte, desenhados: começo, toca, pausa. */
-const ICO = {
-  ini: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M19 5.8v12.4L9.5 12z" fill="currentColor"/></svg>',
-  toca: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6L19 12z" fill="currentColor"/></svg>',
-  pausa: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7.5" y="5" width="3.4" height="14" rx="1.1" fill="currentColor"/><rect x="13.1" y="5" width="3.4" height="14" rx="1.1" fill="currentColor"/></svg>',
-};
 
 /**
  * A situação que a própria fonte declara: eleito, 2º turno, suplente.
@@ -437,17 +422,10 @@ async function main() {
      * O transporte, em pé, na lateral.
      *
      * A TV não tem a barra de reprodução das outras telas: ela ocuparia a faixa inferior inteira,
-     * que aqui é do fio. Sobram os três gestos que se fazem de longe — voltar ao começo, tocar,
-     * pausar —, empilhados na margem, onde a mão chega sem cruzar os números.
+     * que aqui é do fio. Sobram os gestos que se fazem de longe — voltar ao começo, tocar, pausar,
+     * a velocidade e o ao vivo —, empilhados na margem (ver fita.ts).
      */
-    + `<nav class="fita" aria-label="Reprodução da apuração">`
-    + `<button class="ini" title="Voltar ao início da apuração" aria-label="Voltar ao início">${ICO.ini}</button>`
-    + `<button class="toca" title="Reproduzir a apuração" aria-label="Reproduzir">${ICO.toca}</button>`
-    + `<button class="pausa" title="Pausar" aria-label="Pausar">${ICO.pausa}</button>`
-    // a aceleração: quantos minutos de apuração cabem num segundo de relógio
-    + VELOCIDADES.map(v => `<button class="vel" data-v="${v}" title="${v} vez${v === 1 ? '' : 'es'} mais rápido">${v}×</button>`).join('')
-    + `<button class="vivo" title="Voltar ao ao vivo" aria-label="Ao vivo"><i></i></button>`
-    + `<span class="quando">ao vivo</span></nav>`
+    + fitaHtml()
     + `<footer class="fio"><div class="rolo"><div class="tira"></div></div>`
     + `<div class="canto"><span class="rel">—</span>`
     + `<button class="cheia" title="Ver em tela cheia, sem a barra do aplicativo">TV</button></div></footer>`;
@@ -546,32 +524,6 @@ async function main() {
       palco.querySelector('.tira')!.innerHTML = corpo + corpo;
     } catch { /* o rodapé fica com o que tinha */ }
   };
-
-  /*
-   * O rótulo do assento, seguindo o cursor.
-   *
-   * O `title` do navegador levaria um segundo para aparecer e viria com a cara do sistema; num
-   * plenário de 77 bolinhas, é a diferença entre poder ler a casa e ter de adivinhá-la. Um só
-   * elemento serve os dois hemiciclos, e ele escuta no palco — os assentos são redesenhados a cada
-   * atualização, e um ouvinte por bolinha morreria junto com elas.
-   */
-  const rotulo = document.createElement('div');
-  rotulo.className = 'rotulo-assento';
-  rotulo.hidden = true;
-  palco.append(rotulo);
-  palco.addEventListener('pointermove', e => {
-    const alvo = (e.target as HTMLElement).closest('.assento') as SVGCircleElement | null;
-    if (!alvo) { rotulo.hidden = true; return; }
-    const nome = alvo.getAttribute('data-nome') ?? '';
-    const partido = alvo.getAttribute('data-partido');
-    const votos = alvo.getAttribute('data-votos');
-    rotulo.innerHTML = `<b>${esc(nome)}</b>`
-      + (partido ? `<i>${esc(partido)}</i>` : '')
-      + (votos ? `<u>${esc(votos)} votos</u>` : '');
-    rotulo.hidden = false;
-    rotulo.style.transform = `translate(${e.clientX + 14}px, ${e.clientY - 10}px)`;
-  });
-  palco.addEventListener('pointerleave', () => { rotulo.hidden = true; });
 
   /*
    * A presidência dentro do estado é somada município a município — e essa soma é obrigatória.
@@ -711,91 +663,6 @@ async function main() {
   });
 
   /*
-   * O transporte.
-   *
-   * A apuração é uma gravação: o servidor guarda cada leitura publicada e devolve o estado de um
-   * instante qualquer. Aqui isso vira três gestos — voltar ao começo, tocar, pausar — e um relógio
-   * que diz de que hora é o painel no ar. Tocando, o tempo corre a um minuto de apuração por
-   * segundo, que é o passo em que uma virada de madrugada cabe num intervalo de comercial. Ao
-   * chegar no fim de uma apuração que ainda está de pé, o painel volta sozinho para o ao vivo — é
-   * onde ele tem de terminar.
-   */
-  const fita = palco.querySelector<HTMLElement>('.fita')!;
-  let linha: Timeline | null = null, lidoEm = 0;
-  let momento: number | null = null;     // nulo é o ao vivo
-  let tocando = false;
-  let velocidade = 60;
-  const aoVivo = () => momento === null;
-  const fimAgora = () => !linha ? Date.now() : linha.live ? linha.end + (Date.now() - lidoEm) : linha.end;
-  const relogio = (ms: number) => new Date(ms).toLocaleTimeString('pt-BR', {
-    timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit',
-  });
-
-  let buscando = false;
-  const ler = async () => {
-    if (buscando) return;
-    buscando = true;
-    try { snap = await loadSnapshot(momento ?? undefined); desenhar(); }
-    catch { /* o painel segue com a última leitura */ }
-    finally { buscando = false; }
-  };
-
-  const pintarFita = () => {
-    fita.classList.toggle('some', !linha?.available);
-    fita.classList.toggle('vivo', aoVivo());
-    fita.querySelector('.toca')!.classList.toggle('on', tocando);
-    fita.querySelector('.pausa')!.classList.toggle('on', !tocando && !aoVivo());
-    fita.querySelector('.vivo')!.classList.toggle('on', aoVivo());
-    for (const b of fita.querySelectorAll<HTMLElement>('.vel')) {
-      b.classList.toggle('on', Number(b.dataset.v) === velocidade);
-    }
-    fita.querySelector('.quando')!.textContent = aoVivo() ? 'ao vivo' : relogio(momento!);
-  };
-
-  const irPara = (ms: number, toca: boolean) => {
-    if (!linha) return;
-    momento = Math.max(linha.start, Math.min(ms, fimAgora()));
-    tocando = toca;
-    void ler(); pintarFita();
-  };
-  const voltarAoVivo = () => { momento = null; tocando = false; void ler(); pintarFita(); };
-
-  fita.querySelector('.ini')!.addEventListener('click', () => linha && irPara(linha.start, false));
-  fita.querySelector('.toca')!.addEventListener('click', () => {
-    if (!linha?.available) return;
-    // tocar do ponto onde parou; no ao vivo, ou no fim da gravação, recomeça do início
-    const fim = fimAgora();
-    if (aoVivo() || momento! >= fim - 1000) irPara(linha.start, true);
-    else { tocando = true; pintarFita(); }
-  });
-  fita.querySelector('.pausa')!.addEventListener('click', () => { tocando = false; pintarFita(); });
-  fita.querySelector('.vivo')!.addEventListener('click', () => { if (!aoVivo()) voltarAoVivo(); });
-  fita.querySelector('.quando')!.addEventListener('click', () => { if (!aoVivo()) voltarAoVivo(); });
-  for (const b of fita.querySelectorAll<HTMLElement>('.vel')) {
-    b.addEventListener('click', () => { velocidade = Number(b.dataset.v); pintarFita(); });
-  }
-
-  const lerLinha = async () => {
-    try { linha = await loadTimeline(); lidoEm = Date.now(); } catch { /* mantém a anterior */ }
-    pintarFita();
-  };
-  void lerLinha();
-  setInterval(() => { if (visivel()) void lerLinha(); }, 15_000);
-
-  let ultimo = performance.now(), ultimaBusca = 0;
-  setInterval(() => {
-    const agora = performance.now(), dt = agora - ultimo; ultimo = agora;
-    if (aoVivo() || !tocando || !linha || !visivel()) return;
-    momento! += dt * velocidade;
-    if (momento! >= fimAgora()) {
-      if (linha.live) { voltarAoVivo(); return; }
-      momento = fimAgora(); tocando = false;
-    }
-    if (Date.now() - ultimaBusca >= 600) { ultimaBusca = Date.now(); void ler(); }
-    pintarFita();
-  }, 250);
-
-  /*
    * Documento escondido não pede nada.
    *
    * Cada tela pré-renderiza as outras, então as quatro cópias que ninguém está lendo faziam as
@@ -804,6 +671,13 @@ async function main() {
    */
   const visivel = () => document.visibilityState === 'visible'
     && !(document as Document & { prerendering?: boolean }).prerendering;
+
+  const transporte = montarTransporte({
+    elemento: palco.querySelector<HTMLElement>('.fita')!,
+    mostrar: async at => { snap = await loadSnapshot(at); desenhar(); },
+    visivel,
+  });
+  const aoVivo = () => transporte.aoVivo();
 
   snap = await loadSnapshot().catch(() => null);
   await lerPresidenciaNoEstado();

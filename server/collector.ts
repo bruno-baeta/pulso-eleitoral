@@ -496,64 +496,75 @@ export class Collector {
     ];
   }
 
+  /**
+   * O que está sendo colhido agora, e em que ritmo.
+   *
+   * São três origens: as abas abertas (fluxo de eventos), as telas que só consultam (o mapa
+   * municipal marca o contexto por um minuto) e os estados gravados durante a janela do TSE. Elas
+   * se sobrepõem, e a regra é uma só: quem está na tela de alguém manda no ritmo. Por isso o
+   * contexto em foco vem primeiro — a chave de cada arquivo é reclamada pelo primeiro que a pedir,
+   * e quem chega depois só herda o intervalo dela.
+   */
+  private contextosAtivos(now: number) {
+    const emFoco = [...this.subs].map(s => ({ mode: s.mode, uf: s.uf, turn: s.turn, fundo: false }));
+    const observados = [...this.touched.values()].map(s => ({ mode: s.mode, uf: s.uf, turn: s.turn, fundo: false }));
+    const gravados = this.liveContexts(now).map(s => ({ ...s, fundo: true }));
+    const unicos = new Map<string, { mode: Mode; uf: string; turn: Turn; fundo: boolean }>();
+    for (const c of [...emFoco, ...observados, ...gravados]) {
+      if (!this.allowed(c.mode, now)) continue;
+      const chave = `${c.mode}:${c.turn}:${c.uf}`;
+      const anterior = unicos.get(chave);
+      // visto ganha de gravado: o mesmo estado nas duas listas é lido no ritmo do relógio
+      if (!anterior || (anterior.fundo && !c.fundo)) unicos.set(chave, c);
+    }
+    return [...unicos.values()].sort((a, b) => Number(a.fundo) - Number(b.fundo));
+  }
+
+  /** Dispara a leitura de cada arquivo que aqueles contextos precisam, sem repetir chave. */
+  private agendarColeta(contexts: { mode: Mode; uf: string; turn: Turn; fundo: boolean }[]) {
+    const launch = (key: string, task: () => Promise<unknown>) => {
+      if (this.jobs.has(key)) return;
+      this.jobs.add(key);
+      void task()
+        .catch(e => console.error('Coleta:', e instanceof Error ? e.message : e))
+        .finally(() => { this.jobs.delete(key); this.broadcast(); });
+    };
+    for (const mode of new Set(contexts.map(c => c.mode))) {
+      if (isLive(mode)) launch(`${mode}:config`, () => this.fetchConfig(mode as LiveMode));
+    }
+    const feito = new Set<string>();
+    const uma = (key: string, task: () => Promise<unknown>) => {
+      if (feito.has(key)) return;
+      feito.add(key);
+      launch(key, task);
+    };
+    for (const c of contexts) {
+      const modo = c.mode as RemoteMode;
+      const ttl = c.fundo ? TTL_GRAVACAO : this.pollMs;
+      for (const office of Object.keys(OFFICES) as Office[]) {
+        if (c.turn === 2 && !['president', 'governor'].includes(office)) continue;
+        const area = office === 'president' ? 'BR' : c.uf;
+        uma(`${c.mode}:${c.turn}:${area}:${office}`, () => this.fetchRace(modo, c.uf, c.turn, office, undefined, ttl));
+      }
+      // a presidência contada dentro do estado, para o painel poder alternar Brasil e estado
+      if (c.uf !== 'BR') {
+        uma(`${c.mode}:${c.turn}:${c.uf}:president`, () => this.fetchRace(modo, c.uf, c.turn, 'president', c.uf, ttl));
+      }
+      uma(`${c.mode}:${c.turn}:progress`, () => this.fetchProgress(modo, c.turn));
+    }
+  }
+
   private async tick() {
     const now = Date.now();
     this.dropStaleSimulado(now);
-    // During TSE windows the chosen states are collected and recorded even with no browser open.
-    const background = this.liveContexts(now);
     for (const [key, t] of this.touched) if (t.until < now) this.touched.delete(key);
-    if (this.busy || (!this.subs.size && !background.length && !this.touched.size)) return;
+    if (this.busy) return;
+    const contexts = this.contextosAtivos(now);
+    if (!contexts.length) return;
     this.busy = true;
     try {
-      /*
-       * Quem está sendo visto é lido no ritmo do relógio; quem está sendo apenas gravado, mais
-       * devagar. Os dois conjuntos são unidos com o primeiro ganhando: um estado aberto numa aba
-       * continua a um segundo mesmo estando também na lista de gravação.
-       */
-      const emFoco = [...this.subs].map(s => ({ mode: s.mode, uf: s.uf, turn: s.turn, fundo: false }));
-      const observados = [...this.touched.values()].map(s => ({ ...s, fundo: false }));
-      const gravados = background.map(s => ({ ...s, fundo: true }));
-      const contexts = [...new Map([...gravados, ...observados, ...emFoco]
-        .filter(s => this.allowed(s.mode, now))
-        .map(s => [`${s.mode}:${s.turn}:${s.uf}`, s])).values()];
-      const modes = [...new Set(contexts.map(c => c.mode as RemoteMode))];
-      const launch = (key: string, task: () => Promise<unknown>) => {
-        if (this.jobs.has(key)) return;
-        this.jobs.add(key);
-        void task().catch(e => console.error('Coleta:', e instanceof Error ? e.message : e)).finally(() => { this.jobs.delete(key); this.broadcast(); });
-      };
-      for (const mode of modes) if (isLive(mode)) launch(`${mode}:config`, () => this.fetchConfig(mode));
-      /*
-       * Quem está sendo visto manda na cadência, mesmo aparecendo também na lista de gravação.
-       *
-       * A chave da presidência nacional é a mesma para todos os contextos, e o primeiro a reclamá-la
-       * fixava o intervalo — como os gravados entram antes na lista, o painel nacional da tela
-       * aberta era lido a cada quinze segundos enquanto o resto dela andava a cada segundo. Agora a
-       * ordem é a do foco: contexto em foco primeiro, gravação depois.
-       */
-      contexts.sort((a, b) => Number(a.fundo) - Number(b.fundo));
-      const seen = new Set<string>();
-      for (const c of contexts) {
-        for (const office of Object.keys(OFFICES) as Office[]) {
-          if (c.turn === 2 && !['president', 'governor'].includes(office)) continue;
-          const key = `${c.mode}:${c.turn}:${office === 'president' ? 'BR' : c.uf}:${office}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            const ttl = c.fundo ? TTL_GRAVACAO : this.pollMs;
-            launch(key, () => this.fetchRace(c.mode as RemoteMode, c.uf, c.turn, office, undefined, ttl));
-          }
-        }
-        // The president counted inside the viewer's state, for the column's Brasil/UF switch.
-        const ufPresKey = `${c.mode}:${c.turn}:${c.uf}:president`;
-        if (c.uf !== 'BR' && !seen.has(ufPresKey)) {
-          seen.add(ufPresKey);
-          const ttl = c.fundo ? TTL_GRAVACAO : this.pollMs;
-          launch(ufPresKey, () => this.fetchRace(c.mode as RemoteMode, c.uf, c.turn, 'president', c.uf, ttl));
-        }
-        const progressKey = `${c.mode}:${c.turn}:progress`;
-        if (!seen.has(progressKey)) { seen.add(progressKey); launch(progressKey, () => this.fetchProgress(c.mode as RemoteMode, c.turn)); }
-      }
-      // Independent jobs prevent one slow file from delaying the next poll of other races.
+      // trabalhos independentes: um arquivo lento não atrasa a próxima leitura dos outros
+      this.agendarColeta(contexts);
       this.broadcast();
     } finally { this.busy = false; }
   }
