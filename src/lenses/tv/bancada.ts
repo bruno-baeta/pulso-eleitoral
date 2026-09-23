@@ -137,12 +137,27 @@ export function abrirBancadas(o: BancadaOpcoes) {
     + (desenho
       ? `<div class="hemi">${desenho}</div>`
       : `<p class="vazio">${semApuracao ? 'A apuração desta disputa ainda não começou.' : 'Nenhuma cadeira definida ainda.'}</p>`)
-    + `<p class="nota">${semApuracao
-        ? `As cadeiras aparecem quando os primeiros votos válidos forem publicados pelo TSE.`
+    + `<p class="estado">${semApuracao
+        ? 'As cadeiras aparecem quando os primeiros votos válidos forem publicados pelo TSE.'
         : projetada
-        ? `Projeção sobre <b>${fmtPercent(o.race.countedPercent, 1)}</b> apurado: as cadeiras saem do quociente eleitoral e os nomes do art. 108 do Código Eleitoral — entre as candidaturas com ao menos 10% do quociente, as mais votadas do partido. As bolinhas vazadas e o til dizem que é projeção. Nesta disputa o piso é <b>${fmtInt(Math.round(qe * 0.1))}</b> votos; vaga cuja candidatura ainda não o alcançou aparece só como bolinha. O TSE ainda não elegeu ninguém aqui.`
-        : `Cadeiras publicadas pelo TSE: <b>${totalCadeiras}</b> de ${o.race.seats}.`}</p>`
-    + `<p class="nota">Voto nominal é a soma das candidaturas do partido; o voto de legenda, dado ao número do partido, não entra nesta conta. Um partido pode ficar abaixo do quociente e ainda assim eleger: as vagas que sobram da primeira distribuição vão por maiores médias, e disputa essas sobras quem tem ao menos 80% do quociente.</p>`
+        ? `<b>Projeção</b> sobre ${fmtPercent(o.race.countedPercent, 1)} apurado — é o que as bolinhas vazadas e o til querem dizer. O TSE ainda não elegeu ninguém nesta disputa.`
+        : `<b>Resultado publicado pelo TSE</b> — ${totalCadeiras} de ${o.race.seats} cadeiras definidas.`}</p>`
+    /*
+     * A regra em passos, com os números desta disputa.
+     *
+     * Antes eram dois parágrafos corridos com quatro regras dentro, e ninguém lê isso numa tela de
+     * apuração. Cada passo é uma pergunta que a pessoa faz olhando a folha, na ordem em que ela faz.
+     */
+    + (semApuracao ? '' : `<dl class="regra">`
+      + `<dt>O preço de uma cadeira</dt>`
+      + `<dd>O <b>quociente eleitoral</b>: ${fmtInt(o.race.validVotes)} votos válidos repartidos pelas ${o.race.seats} vagas, ${fmtInt(qe)} votos cada.</dd>`
+      + `<dt>Quantas cadeiras cada partido faz</dt>`
+      + `<dd>Quantas vezes o total do partido couber no quociente. As vagas que sobram vão por <b>maiores médias</b>, e disputa essas sobras quem tem ao menos 80% do quociente — ${fmtInt(Math.round(qe * 0.8))} votos. É por isso que um partido abaixo do quociente ainda pode eleger.</dd>`
+      + `<dt>Quem ocupa cada cadeira</dt>`
+      + `<dd>Dentro do partido, as candidaturas mais votadas que tenham ao menos <b>10% do quociente</b> — ${fmtInt(Math.round(qe * 0.1))} votos. Vaga sem ninguém nesse piso fica sem nome: ela volta para a redistribuição.</dd>`
+      + `<dt>O que entra em "votos nominais"</dt>`
+      + `<dd>A soma das candidaturas do partido. O <b>voto de legenda</b>, dado ao número do partido, não entra nesta conta.</dd>`
+      + `</dl>`)
     + `</div>`
     + `<div class="pe">A ordem de votação não define as vagas proporcionais; quem senta é quem o TSE elege.</div>`
     + `</div>`;
@@ -213,9 +228,23 @@ const CSS = `
 .bnc .sigla span { color: var(--cor); font-weight: 600; }
 .bnc .sigla b { color: #f6f3ec; font-variant-numeric: tabular-nums; margin-left: .2em; }
 
-.bnc .nota { margin: 0; padding: 2vh 2.2vw; font-size: clamp(10px, .78vw, 15px);
-  line-height: 1.55; color: #6a6863; }
-.bnc .nota b { color: #b9b6ae; }
+.bnc .estado { margin: 0; padding: 2.2vh 2.2vw .6vh; font-size: clamp(10px, .8vw, 15px);
+  line-height: 1.5; color: #6a6863; }
+.bnc .estado b { color: #b9b6ae; }
+
+/* A regra em passos: o termo de um lado, a frase do outro. Dois paragrafos corridos com quatro
+   regras dentro ninguem le numa tela de apuracao. */
+.bnc dl.regra { display: grid; grid-template-columns: minmax(9vw, 15vw) 1fr;
+  gap: .9vh 1.4vw; margin: 0; padding: 1.4vh 2.2vw 2.4vh; }
+.bnc dl.regra dt { font-size: clamp(9px, .72vw, 14px); color: #8b8981; text-align: right;
+  line-height: 1.45; }
+.bnc dl.regra dd { margin: 0; font-size: clamp(10px, .78vw, 15px); color: #6a6863; line-height: 1.5; }
+.bnc dl.regra dd b { color: #b9b6ae; font-weight: 600; }
+
+@media (max-width: 720px) {
+  .bnc dl.regra { grid-template-columns: 1fr; gap: .3vh 0; }
+  .bnc dl.regra dt { text-align: left; color: #b9b6ae; margin-top: 1.4vh; }
+}
 .bnc .vazio { margin: 0; padding: 4vh 2.2vw 0; text-align: center; color: #6a6863;
   font-size: clamp(11px, .85vw, 16px); }
 
