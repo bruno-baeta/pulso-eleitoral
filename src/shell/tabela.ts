@@ -149,6 +149,14 @@ export interface CandidatoOpcoes {
   subtitulo: string;
   /** O número da candidatura, que é como o arquivo municipal a identifica. */
   numero: string;
+  /**
+   * Quantos votos a candidatura tem na disputa inteira.
+   *
+   * Serve para a folha conferir a própria soma e dizer quanto dela já foi localizado. Sem isso,
+   * uma lista com doze cidades de cem votos parecia o total de quem tem cem mil, e a conta não
+   * fechava para quem estava olhando — sem nenhum aviso de que faltavam cidades.
+   */
+  votos: number;
   cor: string;
   mode: string; uf: string; turn: number | string;
   office: string;
@@ -179,7 +187,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   const mais = folha.querySelector('.mais') as HTMLElement;
 
   type Linha = { nome: string; uf: string; busca: string; votos: number; validos: number; pos: number };
-  let linhas: Linha[] = [], quantas = 200, relogio = 0, fechada = false, parcial = '';
+  let linhas: Linha[] = [], quantas = 200, relogio = 0, fechada = false, parcial = '', conferencia = '';
 
   const desenhar = () => {
     const q = dobrar(busca.value.trim());
@@ -191,7 +199,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
       + `<td class="r"><span class="pos" style="--c:${esc(o.cor)}">${r.pos}º</span></td></tr>`).join('')
       || (linhas.length ? `<tr><td colspan="5" class="n">Nenhuma cidade encontrada.</td></tr>` : '');
     const rolagem = lista.length > quantas ? `Mostrando ${fmtInt(quantas)} de ${fmtInt(lista.length)} cidades · role para ver mais` : '';
-    mais.textContent = [rolagem, parcial].filter(Boolean).join(' · ');
+    mais.textContent = [rolagem, conferencia, parcial].filter(Boolean).join(' · ');
   };
 
   const carregar = async () => {
@@ -232,6 +240,18 @@ export function abrirCandidato(o: CandidatoOpcoes) {
       : d.total ? `Carregando municípios · ${fmtInt(d.loaded ?? 0)} de ${fmtInt(d.total)}`
       : (d.message || 'Carregando municípios…');
     parcial = !pronto && d.total ? `${fmtInt(d.loaded ?? 0)} de ${fmtInt(d.total)} cidades recebidas` : '';
+
+    /*
+     * A folha confere a própria soma contra o total da candidatura.
+     *
+     * Doze cidades de cem votos para quem tem cem mil não é uma lista curta: é uma lista
+     * incompleta, e sem dizer isso a conta simplesmente não fechava para quem estava olhando.
+     * Quando bate, a frase confirma que está tudo ali; quando não bate, diz quanto falta.
+     */
+    const somado = linhas.reduce((t, r) => t + r.votos, 0);
+    conferencia = !o.votos ? ''
+      : somado >= o.votos ? `${fmtInt(somado)} votos em ${fmtInt(linhas.length)} cidades — a soma fecha com o total da candidatura`
+      : `${fmtInt(somado)} de ${fmtInt(o.votos)} votos localizados${pronto ? '' : ' — ainda chegando'}`;
     desenhar();
     if (!pronto) relogio = window.setTimeout(carregar, 2500);
   };

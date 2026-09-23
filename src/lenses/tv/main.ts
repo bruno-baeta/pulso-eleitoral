@@ -638,6 +638,7 @@ async function main() {
       titulo: [...CORRIDAS, ...CADEIRAS].find(x => x.key === office)?.nome ?? office,
       nome: c.name,
       subtitulo: `${c.party}${c.number ? ` ${c.number}` : ''} · ${fmtInt(c.votes)} votos · ${fmtPercent(c.percent, 2)}`,
+      votos: c.votes,
       numero: c.number ?? '',
       cor: c.color || '#8a94a6',
       mode: MODE, uf: UF, turn: TURN, office,

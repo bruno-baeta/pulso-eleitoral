@@ -41,6 +41,23 @@ export function abrirBancadas(o: BancadaOpcoes) {
   const { bancadas, projetada } = semApuracao
     ? { bancadas: [], projetada: true }
     : bancadasDe(o.candidatos, o.race.seats, o.race.validVotes);
+  /*
+   * Os votos do partido, e não os dos eleitos dele.
+   *
+   * `bancadasDe` soma só as candidaturas eleitas quando o TSE já publicou eleitos — o que é certo
+   * para contar cadeiras e errado para exibir como "votos do partido". A primeira versão desta
+   * folha mostrou o Solidariedade com 86.042 votos e uma cadeira, contra um quociente de 210.964:
+   * aquilo eram os votos pessoais do único eleito, não do partido, que fez 178.969. Número na tela
+   * com rótulo que quer dizer outra coisa é a mesma família de erro que a regra 2 existe para
+   * impedir.
+   *
+   * Isto ainda é o voto **nominal** — a soma das candidaturas. O voto de legenda, dado ao número do
+   * partido, não vem na lista de candidatos: nesta disputa são 343.691 votos, 3% dos válidos.
+   */
+  const nominais = new Map<string, number>();
+  for (const c of o.candidatos) nominais.set(c.party, (nominais.get(c.party) ?? 0) + c.votes);
+  const votosDe = (partido: string) => nominais.get(partido) ?? 0;
+
   const qe = Math.round(quocienteEleitoral(o.race.validVotes, o.race.seats));
   const til = projetada ? '~' : '';
   const totalCadeiras = bancadas.reduce((t, b) => t + b.cadeiras, 0);
@@ -60,11 +77,14 @@ export function abrirBancadas(o: BancadaOpcoes) {
     + `</div>`).join('');
 
   const linhas = bancadas.map(b => {
-    const porCadeira = b.cadeiras ? Math.round(b.votos / b.cadeiras) : null;
+    const votos = votosDe(b.partido);
+    const porCadeira = b.cadeiras ? Math.round(votos / b.cadeiras) : null;
+    const doQuociente = qe > 0 ? votos / qe * 100 : 0;
     return `<tr${b.cadeiras ? '' : ' class="fora"'}>`
       + `<td><i class="pt" style="background:${esc(b.cor)}"></i>${esc(b.partido)}</td>`
-      + `<td class="r">${fmtInt(b.votos)}</td>`
-      + `<td class="r">${o.race.validVotes ? fmtPercent(b.votos / o.race.validVotes * 100, 2) : '—'}</td>`
+      + `<td class="r">${fmtInt(votos)}</td>`
+      + `<td class="r">${o.race.validVotes ? fmtPercent(votos / o.race.validVotes * 100, 2) : '—'}</td>`
+      + `<td class="r">${qe > 0 ? fmtPercent(doQuociente, 0) : '—'}</td>`
       + `<td class="r"><b>${b.cadeiras ? `${til}${b.cadeiras}` : '—'}</b></td>`
       + `<td class="r">${porCadeira ? fmtInt(porCadeira) : '—'}</td></tr>`;
   }).join('');
@@ -87,11 +107,12 @@ export function abrirBancadas(o: BancadaOpcoes) {
         : projetada
         ? `Projeção pelo quociente eleitoral sobre <b>${fmtPercent(o.race.countedPercent, 1)}</b> apurado — as bolinhas vazadas e o til dizem isso. O TSE ainda não publicou nenhum eleito nesta disputa.`
         : `Cadeiras publicadas pelo TSE: <b>${totalCadeiras}</b> de ${o.race.seats}.`}</p>`
-    + `<table><colgroup><col style="width:26%"><col style="width:20%"><col style="width:16%">`
-    + `<col style="width:16%"><col style="width:22%"></colgroup>`
-    + `<thead><tr><th>Partido</th><th class="r">Votos</th><th class="r">% válidos</th>`
-    + `<th class="r">Cadeiras</th><th class="r">Votos por cadeira</th></tr></thead>`
+    + `<table><colgroup><col style="width:24%"><col style="width:17%"><col style="width:13%">`
+    + `<col style="width:16%"><col style="width:12%"><col style="width:18%"></colgroup>`
+    + `<thead><tr><th>Partido</th><th class="r">Votos nominais</th><th class="r">% válidos</th>`
+    + `<th class="r">Do quociente</th><th class="r">Cadeiras</th><th class="r">Votos por cadeira</th></tr></thead>`
     + `<tbody>${linhas}</tbody></table>`
+    + `<p class="nota">Voto nominal é a soma das candidaturas do partido; o voto de legenda, dado ao número do partido, não entra nesta conta. Um partido pode ficar abaixo do quociente e ainda assim eleger: as vagas que sobram da primeira distribuição vão por maiores médias, e disputa essas sobras quem tem ao menos 80% do quociente.</p>`
     + (semCadeira ? `<p class="nota">${semCadeira} ${semCadeira === 1 ? 'partido não alcançou' : 'partidos não alcançaram'} o quociente e ${semCadeira === 1 ? 'fica' : 'ficam'} fora da distribuição.</p>` : '')
     + `</div>`
     + `<div class="pe">A ordem de votação não define as vagas proporcionais; quem senta é quem o TSE elege.</div>`
