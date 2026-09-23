@@ -25,6 +25,7 @@ import { seedScale } from '../../shell/row';
 import { publishedStatus } from '../../domain/derive';
 import { abrirCandidato, abrirTabela } from '../../shell/tabela';
 import { fitaHtml, montarTransporte } from './fita';
+import { bancadasDe } from './bancadas';
 import { CSS } from './style';
 
 const app = document.getElementById('app')!;
@@ -298,7 +299,6 @@ function cadeiras(office: Office, race: Race | undefined): string {
    * primeiro voto. Nada aqui diz que alguém sentou: quem senta continua sendo quem o TSE elege, e
    * assim que ele eleger é isso que volta a aparecer.
    */
-  const parcial = !eleitos.length;
 
   /*
    * As bancadas numa linha só.
@@ -307,49 +307,17 @@ function cadeiras(office: Office, race: Race | undefined): string {
    * comiam altura que faz falta às colunas dos mais votados, e nenhuma acrescentava nada a um
    * número inteiro e pequeno. Sigla e contagem, em sequência, do maior para o menor.
    */
-  const porPartido = new Map<string, { cor: string; n: number; votos: number }>();
-  for (const c of parcial ? race.candidates : eleitos) {
-    const p = porPartido.get(c.party) ?? { cor: c.color, n: 0, votos: 0 };
-    if (c.elected) p.n++;
-    p.votos += c.votes;
-    porPartido.set(c.party, p);
-  }
-  const validos = Math.max(1, race.validVotes
-    || [...porPartido.values()].reduce((t, p) => t + p.votos, 0));
-  /*
-   * Enquanto o TSE não elege ninguém, a bancada é projetada — e continua contada em cadeiras.
-   *
-   * Mostrar a votação do partido em porcentagem trocava a unidade do painel no meio da noite:
-   * "PT 3" virava "PT 2,1%", e as duas coisas não se comparam. A projeção é a regra da eleição
-   * proporcional: quem não alcança o quociente eleitoral fica de fora, o resto divide as vagas
-   * pelas maiores médias. É uma projeção sobre o que já foi apurado, marcada com o til, e some
-   * assim que a situação publicada chega — quem senta é quem o TSE elege, nunca esta conta.
-   */
-  const projetar = () => {
-    const qe = validos / Math.max(1, race.seats);
-    const aptos = [...porPartido.entries()].filter(([, p]) => p.votos >= qe);
-    for (const [, p] of aptos) p.n = 0;
-    for (let v = 0; v < race.seats && aptos.length; v++) {
-      let melhor = aptos[0];
-      for (const e of aptos) if (e[1].votos / (e[1].n + 1) > melhor[1].votos / (melhor[1].n + 1)) melhor = e;
-      melhor[1].n++;
-    }
-  };
-  if (parcial) projetar();
+  const { bancadas, projetada } = bancadasDe(race.candidates, race.seats, race.validVotes);
+  const quanto = (b: { cadeiras: number }) => `${projetada ? '~' : ''}${b.cadeiras}`;
 
-  const bancadas = [...porPartido.entries()]
-    .filter(([, p]) => !parcial || p.n > 0)
-    .sort((a, b) => b[1].n - a[1].n || b[1].votos - a[1].votos);
-  const quanto = ([, p]: [string, { n: number; votos: number }]) => `${parcial ? '~' : ''}${p.n}`;
-
-  const barra = `<p class="bancadas${parcial ? ' previa' : ''}">`
-    + bancadas.slice(0, 8).map(e =>
-        `<span style="--cor:${esc(e[1].cor)}">${esc(e[0])} <b>${quanto(e)}</b></span>`).join('')
+  const barra = `<p class="bancadas${projetada ? ' previa' : ''}">`
+    + bancadas.slice(0, 8).map(b =>
+        `<span style="--cor:${esc(b.cor)}">${esc(b.partido)} <b>${quanto(b)}</b></span>`).join('')
     + (bancadas.length > 8
       ? `<span class="resto">+${bancadas.length - 8} partidos `
-        + `<b>${parcial ? '~' : ''}${bancadas.slice(8).reduce((t, [, p]) => t + p.n, 0)}</b></span>`
+        + `<b>${projetada ? '~' : ''}${bancadas.slice(8).reduce((t, b) => t + b.cadeiras, 0)}</b></span>`
       : '')
-    + (parcial
+    + (projetada
       ? `<span class="aberta">projeção sobre ${fmtPercent(race.countedPercent, 1)} apurado</span>`
       : vazias ? `<span class="aberta">a definir <b>${vazias}</b></span>` : '')
     + `</p>`;
@@ -365,7 +333,7 @@ function cadeiras(office: Office, race: Race | undefined): string {
    * cinco colunas indistinguíveis. A escala começa um pouco abaixo do quinto colocado — e o número
    * de votos vai escrito sob cada coluna, que é o que impede a leitura torta.
    */
-  const ordem = parcial ? [...race.candidates].sort((a, b) => b.votes - a.votes) : eleitos;
+  const ordem = projetada ? [...race.candidates].sort((a, b) => b.votes - a.votes) : eleitos;
   // o mesmo registro das disputas de cima: é o que dá a seta e o deslize a estas colunas também
   registrarMovimento(office, race, ordem);
   const cinco = ordem.slice(0, 5);

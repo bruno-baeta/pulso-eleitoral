@@ -95,11 +95,15 @@ Configuração opcional em `.env` — veja `.env.example`.
 ## Desenvolvimento
 
 ```bash
-npm test           # as contas: ranking, situação, escala, gravação, limites do TSE
-npm run test:telas # as três telas num navegador de verdade (precisa do npm run dev no ar)
+npm test           # 160 testes das contas: ranking, bancadas, formatação, rotas, coleta do TSE
+npm run test:telas # 29 verificações nas três telas, num navegador (precisa do npm run dev no ar)
 npm run typecheck  # tsc --noEmit
 npm run baseline   # grava a referência de pixels; -- check compara com ela
 ```
+
+Os testes de conta não precisam de rede nem de navegador. Os de tela sobem um Chromium contra o
+servidor de desenvolvimento e conferem o que só aparece carregando a página — a tabela buscando as
+1.035 candidaturas, o player voltando ao vivo, a troca de estado, a bancada somando as 53 vagas.
 
 Estrutura:
 

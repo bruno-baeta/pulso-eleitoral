@@ -10,7 +10,15 @@ import { MunicipalService } from './municipal.ts';
 import { STATES, type Mode, type Office, type Turn } from '../shared/types.ts';
 
 try { loadEnvFile(); } catch { /* .env is optional. */ }
-const app = Fastify({ logger: true });
+/*
+ * Parâmetro fora do combinado é erro, não sujeira a ser varrida.
+ *
+ * Os schemas declaram `additionalProperties: false`, mas o Ajv do Fastify vem com
+ * `removeAdditional: true`: em vez de recusar, ele apagava a propriedade estranha e respondia
+ * como se nada tivesse sido pedido. Um `&trun=2` digitado errado devolvia, em silêncio, o
+ * primeiro turno — que é exatamente o engano que a declaração existe para pegar.
+ */
+const app = Fastify({ logger: true, ajv: { customOptions: { removeAdditional: false } } });
 const collector = new Collector();
 await collector.start();
 const municipal = new MunicipalService(collector.transport, {

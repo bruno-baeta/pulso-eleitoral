@@ -26,7 +26,16 @@ export interface OfficeData {
  * "santana do livramento" têm de encontrar o mesmo município, então a pontuação também cai.
  */
 export const fold = (s: string) => foldBase(s).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-export const munName = (nm: string) => titleCase(nm).replace(/ D'(\w)/g, (_, c) => ` d'${c.toUpperCase()}`);
+/**
+ * O nome do município, com o apóstrofo tratado como o IBGE o escreve.
+ *
+ * São duas regras, e elas não são a mesma: a letra depois do apóstrofo é maiúscula — Sant'Ana,
+ * Santa Bárbara d'Oeste —, e o "D'" solto, que é preposição, fica minúsculo. A segunda estava
+ * aqui; sem a primeira, meia dúzia de municípios apareciam como "Sant'ana".
+ */
+export const munName = (nm: string) => titleCase(nm)
+  .replace(/(\p{L})'(\p{L})/gu, (_, antes: string, depois: string) => `${antes}'${depois.toUpperCase()}`)
+  .replace(/ D'/g, " d'");
 
 export async function fetchMunicipal(office: Office, since?: number): Promise<Payload | Unchanged | null> {
   try {

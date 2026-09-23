@@ -26,8 +26,17 @@ export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const CLASH = new Set(['0-6', '1-3', '1-4', '1-5', '1-7', '2-4', '2-5', '3-7', '4-7']);
 const clash = (a: number, b: number) => CLASH.has(a < b ? `${a}-${b}` : `${b}-${a}`);
 /**
- * Colours for a map legend: PT red and PL blue stay put; every other party keeps its slot unless it is taken
- * or too close to ANY colour already on the map (not only the previous one), since winners sit side by side.
+ * As cores da legenda do mapa.
+ *
+ * PT e PL têm casa reservada — vermelho e azul, como eles se apresentam. Os demais ficam com a sua
+ * casa de sempre, a menos que ela esteja ocupada ou perto demais de alguma cor **já no mapa** (não
+ * só da anterior): num mapa, quem vence municípios vizinhos fica lado a lado, e duas casas
+ * próximas viram uma mancha só.
+ *
+ * A partir de quatro partidos a restrição fica insatisfatível — são oito casas e vários pares
+ * próximos entre si —, e aí a preferência é declarada: aceitar duas cores parecidas é melhor do
+ * que repetir a mesma cor ou deixar um partido sem nenhuma. Com três partidos, que é o caso comum
+ * de um mapa estadual, a lista sai sempre livre de pares próximos.
  */
 export function mapColors(parties: string[]): string[] {
   const used: number[] = [];

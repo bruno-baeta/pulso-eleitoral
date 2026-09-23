@@ -81,6 +81,54 @@ try {
   const telas = await pagina.$$eval('select[data-k="lens"] option', o => o.map(x => x.textContent));
   checar(telas.join() === 'TV,Corrida,Território', 'Seletor: as três telas, nesta ordem');
 
+
+  // ── a folha de cidades de uma candidatura ───────────────────────────────────────────────────
+  await abrir('/');
+  await pagina.click('.corridas section[data-c="governor"] .nomes li:first-child .abre');
+  await pagina.waitForTimeout(3000);
+  const cidades = await conta('.tbl-folha tbody tr');
+  checar(cidades > 100, `TV: o nome abre as cidades da candidatura (${cidades} linhas)`);
+  checar((await pagina.$eval('.tbl-folha .t', e => e.textContent)).length > 2, 'TV: a folha de cidades tem o nome no cabeçalho');
+  await pagina.keyboard.press('Escape');
+
+  // ── o presidente contado no Brasil e dentro do estado ────────────────────────────────────────
+  const votosBR = await pagina.$eval('.corridas section[data-c="president"] .nomes li u', e => e.textContent);
+  await pagina.click('.corridas section[data-c="president"] .escopo button[data-e="UF"]');
+  await pagina.waitForTimeout(2500);
+  const votosUF = await pagina.$eval('.corridas section[data-c="president"] .nomes li u', e => e.textContent);
+  const soNumero = t => Number(t.replace(/\D/g, ''));
+  checar(soNumero(votosUF) > 0 && soNumero(votosUF) < soNumero(votosBR),
+    `TV: o presidente no estado conta menos que no país (${votosUF} contra ${votosBR})`);
+  await pagina.click('.corridas section[data-c="president"] .escopo button[data-e="BR"]');
+  await pagina.waitForTimeout(1500);
+
+  // ── tela cheia esconde a barra do aplicativo ────────────────────────────────────────────────
+  await pagina.evaluate(() => document.documentElement.classList.add('sem-barra'));
+  await pagina.waitForTimeout(600);
+  checar(await pagina.$eval('.sh-head', e => getComputedStyle(e).display) === 'none', 'TV: em tela cheia a barra some');
+  await pagina.evaluate(() => document.documentElement.classList.remove('sem-barra'));
+
+  // ── trocar de estado troca os números ───────────────────────────────────────────────────────
+  const antesMG = await pagina.$eval('.corridas section[data-c="governor"] .nomes li span', e => e.textContent);
+  await pagina.selectOption('select[data-k="uf"]', 'SP');
+  await pagina.waitForTimeout(6000);
+  const depoisSP = await pagina.$eval('.corridas section[data-c="governor"] .nomes li span', e => e.textContent);
+  checar(antesMG !== depoisSP, `TV: trocar de estado troca a disputa (${antesMG.trim()} → ${depoisSP.trim()})`);
+  checar(await conta('.vazio') === 0, 'TV: depois da troca não sobra painel vazio');
+
+  // ── as etiquetas de situação vêm do TSE ─────────────────────────────────────────────────────
+  await abrir('/');
+  const etiquetas = await pagina.$$eval('.tag', t => t.map(x => x.textContent));
+  checar(etiquetas.includes('eleito'), 'TV: quem o TSE elegeu aparece marcado como eleito');
+  checar(etiquetas.every(t => ['eleito', '2º turno', 'suplente', 'não eleito'].includes(t)),
+    'TV: nenhuma etiqueta fora das que a fonte publica');
+
+  // ── a bancada dos deputados ─────────────────────────────────────────────────────────────────
+  const bancadas = await pagina.$eval('.cadeiras section[data-c="federal"] .bancadas', e => e.textContent);
+  checar(/\d/.test(bancadas), `Deputados: a linha de bancadas tem números (${bancadas.slice(0, 40)}…)`);
+  const soma = await pagina.$$eval('.cadeiras section[data-c="federal"] .bancadas b', b => b.map(x => Number(x.textContent.replace('~', ''))).reduce((a, c) => a + c, 0));
+  checar(soma > 0 && soma <= 53, `Deputados: as cadeiras somadas cabem nas 53 vagas de Minas (${soma})`);
+
   checar(erros.length === 0, `Nenhum erro de JavaScript${erros.length ? `: ${erros[0]}` : ''}`);
 } finally {
   await navegador.close();
