@@ -110,11 +110,24 @@ export function andamento(eleicao: string, uf: string, quantos: number, opcoes: 
   };
 }
 
-/** Resultado de um município (`-u.json`), no layout 2026. */
-export function resultadoMunicipal(eleicao: string, cd: string, cargo: number, votos: [string, number][]) {
+/**
+ * Resultado de um município (`-u.json`), no layout 2026.
+ *
+ * `totais` liga o bloco que o TSE publica junto dos votos — brancos, nulos, total e seções. É
+ * opcional porque a ausência dele também é um caso a testar: cidade publicada sem esse bloco não
+ * pode sumir da soma.
+ */
+export function resultadoMunicipal(
+  eleicao: string, cd: string, cargo: number, votos: [string, number][],
+  totais?: { vb: number; vn: number; st: number; ts: number },
+) {
+  const vv = votos.reduce((s, [, v]) => s + v, 0);
   return {
     ele: eleicao, cdabr: cd, dg: '17/09/2026', hg: '10:45:45',
     carg: [{ cd: cargo, agr: [{ par: [{ cand: votos.map(([n, v]) => ({ n, vap: String(v) })) }] }] }],
-    v: { vv: String(votos.reduce((s, [, v]) => s + v, 0)) },
+    v: totais
+      ? { vv: String(vv), vb: String(totais.vb), vn: String(totais.vn), tv: String(vv + totais.vb + totais.vn) }
+      : { vv: String(vv) },
+    ...(totais ? { s: { st: String(totais.st), ts: String(totais.ts) } } : {}),
   };
 }

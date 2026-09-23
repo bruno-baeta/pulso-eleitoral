@@ -8,7 +8,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MunicipalService, type MunicipalHooks, type MunicipalPayload } from '../server/municipal.ts';
@@ -279,8 +279,16 @@ test('o que veio do disco não passa por completo até a fonte confirmar', async
     await s.encerrar();
   } finally { antes.close(); }
 
-  // Processo novo, e agora a fonte tem mais cidades do que o disco guardou.
+  /*
+   * Processo novo. A fonte avançou: o andamento traz uma hora nova, e portanto carimbos novos.
+   *
+   * A confirmação que importa é o andamento, não rebuscar as 853 cidades: com os carimbos vindo do
+   * disco, cidade cujo carimbo não mudou não precisa ser pedida de novo — é isso que faz o restart
+   * retomar em vez de recomeçar. O que não pode, e é o que este teste guarda, é o job se declarar
+   * pronto servindo o retrato do disco sem ter falado com o TSE.
+   */
   const tse = tseComMinas(6);
+  tse.em(`-e0${ELEICAO}-ab.json`, { corpo: andamento(ELEICAO, 'mg', 6, { hora: '11:30:00' }) });
   const depois = new TseTransport(500, tse.fetch);
   try {
     const s = new MunicipalService(depois, hooks(), dir, 0.01);
@@ -290,6 +298,102 @@ test('o que veio do disco não passa por completo até a fonte confirmar', async
       'mas não pode se declarar pronto antes de a fonte confirmar');
 
     await ateFechar(s, 'simulado', 'MG', 1, 'governor');
-    assert.ok(tse.contar('-c0003-e0') > 0, 'o job foi mesmo buscar na fonte em vez de ficar no disco');
+    assert.ok(tse.contar('-ab.json') > 0, 'o job foi mesmo falar com a fonte, e não ficou no disco');
+    assert.ok(tse.contar('-c0003-e0') > 0, 'e com carimbo novo as cidades foram rebuscadas');
   } finally { depois.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('restart não rebusca cidade cujo carimbo não mudou', async () => {
+  /*
+   * O outro lado da mesma moeda: `fetched` e os carimbos não sobreviviam ao processo, então toda
+   * cidade nascia suja e reiniciar custava rebuscar tudo — 8.983 arquivos no simulado de
+   * 23/09/2026. Com os dois no disco, o TSE só é consultado sobre o que o próprio TSE diz ter
+   * mudado.
+   */
+  const dir = await mkdtemp(join(tmpdir(), 'pulso-mun-'));
+  const primeiroTse = tseComTotais(6);
+  const antes = new TseTransport(500, primeiroTse.fetch);
+  try {
+    const s = new MunicipalService(antes, hooks(), dir, 0.01);
+    assert.equal(cidades(await ateFechar(s, 'simulado', 'MG', 1, 'governor')), 6);
+    await s.encerrar();
+  } finally { antes.close(); }
+
+  // Mesmo TSE, mesma hora no andamento: nada mudou desde o desligamento.
+  const tse = tseComTotais(6);
+  const depois = new TseTransport(500, tse.fetch);
+  try {
+    const s = new MunicipalService(depois, hooks(), dir, 0.01);
+    await ateFechar(s, 'simulado', 'MG', 1, 'governor');
+    assert.equal(tse.contar('-c0003-e0'), 0, 'nenhum arquivo de cidade foi pedido de novo');
+    assert.ok(tse.contar('-ab.json') > 0, 'mas o andamento foi lido, que é onde a mudança apareceria');
+  } finally { depois.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+/** Um TSE de Minas cujas cidades publicam o bloco de totais junto dos votos. */
+function tseComTotais(quantos: number, opcoes: { encerradas?: boolean } = {}) {
+  const tse = tseComMinas(quantos, opcoes);
+  tse.em(`-c0003-e0${ELEICAO}-u.json`, url => {
+    const cd = /mg(\d+)-c/.exec(url)?.[1] ?? '0';
+    return { corpo: resultadoMunicipal(ELEICAO, cd, 3, [['83', 100], ['89', 50]], { vb: 7, vn: 3, st: 20, ts: 20 }) };
+  });
+  return tse;
+}
+
+const totaisDe = (p: MunicipalPayload | { unchanged: true }) => ('totais' in p ? p.totais : null);
+
+test('a soma não perde cidade publicada que não trouxe o bloco de totais', async () => {
+  /*
+   * O defeito, relatado como "os números nunca batem": `somar` pulava toda cidade sem `ts`, e o
+   * buraco não aparecia em lugar nenhum. A tela dizia "126 de 817 cidades apuradas" como se fossem
+   * essas as apuradas, e a apuração pelas cidades dava 87,7% contra os 94% do painel.
+   *
+   * Cidade publicada conta sempre. A que não trouxe os totais vira um número visível.
+   */
+  const { servico: s, fechar } = await servico(tseComMinas(9));  // sem bloco de totais
+  try {
+    const t = totaisDe(await ateFechar(s, 'simulado', 'MG', 1, 'governor'));
+    assert.equal(t?.cidades, 9, 'as nove cidades publicadas entram na soma');
+    assert.equal(t?.semTotais, 9, 'e as nove aparecem como cidades sem o bloco de totais');
+    assert.equal(t?.nominais, 9 * 150, 'os votos válidos somam mesmo sem o resto');
+  } finally { await fechar(); }
+});
+
+test('cidade encerrada lida por um parser mais velho é rebuscada', async () => {
+  /*
+   * O defeito que custou a simulação de 23/09/2026.
+   *
+   * Os totais por cidade passaram a ser lidos no meio da janela. As 691 cidades de Minas já
+   * buscadas antes disso estavam encerradas (`and='f'`), e `encerrada` nunca mais pedia cidade
+   * encerrada: ficaram com zero nesses campos para sempre. Nenhum carimbo do TSE muda para avisar
+   * que quem mudou fomos nós — só a versão do esquema avisa.
+   */
+  const dir = await mkdtemp(join(tmpdir(), 'pulso-mun-'));
+  const tse = tseComTotais(6, { encerradas: true });
+  try {
+    // Um arquivo gravado pelo parser velho: totais zerados e sem a sexta coluna, a da versão.
+    const carimbo = '17/09/2026 10:45:45|56|f';
+    const velho = {
+      c: [['83', 0], ['89', 0]],
+      m: Array.from({ length: 6 }, (_, i) => [`31${String(i).padStart(5, '0')}`, `CIDADE MG${i}`, 'MG', 150, [0, 100, 1, 50]]),
+      t: Array.from({ length: 6 }, () => [0, 0, 0, 0, 0]),
+      // Carimbos e buscas também voltam do disco — sem isso toda cidade nasceria suja e o
+      // congelamento não aconteceria nem com o defeito presente, que era o que este teste deixava
+      // passar na primeira versão.
+      k: Array.from({ length: 6 }, (_, i) => [`MG${40000 + i}`, carimbo, '10:45:45', 56, 1]),
+      b: Array.from({ length: 6 }, (_, i) => [`31${String(i).padStart(5, '0')}`, carimbo]),
+    };
+    await mkdir(join(dir, 'municipal', 'simulado', 'sessao-de-teste'), { recursive: true });
+    await writeFile(join(dir, 'municipal', 'simulado', 'sessao-de-teste', 't1-mg-governor.json'), JSON.stringify(velho));
+
+    const transporte = new TseTransport(500, tse.fetch);
+    try {
+      const s = new MunicipalService(transporte, hooks(), dir, 0.01);
+      const t = totaisDe(await ateFechar(s, 'simulado', 'MG', 1, 'governor'));
+      assert.equal(t?.cidades, 6);
+      assert.equal(t?.semTotais, 0, 'nenhuma cidade ficou presa no esquema velho');
+      assert.equal(t?.secoes, 6 * 20, 'e as seções voltaram do TSE');
+      assert.equal(t?.brancos, 6 * 7);
+    } finally { transporte.close(); }
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

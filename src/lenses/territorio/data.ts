@@ -12,7 +12,7 @@ export interface Payload {
   loaded: number; total: number; version: number; sourceAt: string | null;
   c: [string, number][]; m: [string, string, string, number, number[], string?][]; n: Record<string, [string, string]>;
   /** Presente a partir da versão que passou a guardar os totais por cidade; ausente nos builds antigos. */
-  totais?: { cidades: number; nominais: number; brancos: number; nulos: number; total: number; secoes: number; secoesTotais: number };
+  totais?: { cidades: number; nominais: number; brancos: number; nulos: number; total: number; secoes: number; secoesTotais: number; desde: string; semTotais: number };
 }
 export interface Unchanged { unchanged: true; status: Status; message: string; loaded: number; total: number; version: number }
 
@@ -21,7 +21,7 @@ export interface OfficeData {
   office: Office; area: string; status: Status; message: string; loaded: number; total: number; version: number; sourceAt: string | null;
   nums: string[]; totals: number[]; names: Map<string, [string, string]>;
   /** A soma das cidades apuradas, campo a campo, como o TSE os publica (ver server/municipal.ts). */
-  totais: { cidades: number; nominais: number; brancos: number; nulos: number; total: number; secoes: number; secoesTotais: number };
+  totais: { cidades: number; nominais: number; brancos: number; nulos: number; total: number; secoes: number; secoesTotais: number; desde: string; semTotais: number };
   cities: CityData[]; byCdi: Map<string, CityData>; wins: Map<number, number>;
 }
 
@@ -57,12 +57,12 @@ export function prepare(p: Payload): OfficeData {
   return {
     office: p.office, area: p.area, status: p.status, message: p.message, loaded: p.loaded, total: p.total, version: p.version, sourceAt: p.sourceAt,
     nums: p.c.map(c => c[0]), totals: p.c.map(c => c[1]), names: new Map(Object.entries(p.n)),
-    totais: p.totais ?? { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0 },
+    totais: p.totais ?? { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0, desde: '', semTotais: 0 },
     cities, byCdi: new Map(cities.map(c => [c.cdi, c])), wins,
   };
 }
 
 /** Placeholder while nothing has arrived (or the office has no data for this selection). */
 export function empty(office: Office, status: Status, message: string, loaded = 0, total = 0): OfficeData {
-  return { office, area: office === 'president' ? 'BR' : UF, status, message, loaded, total, version: -1, sourceAt: null, nums: [], totals: [], names: new Map(), cities: [], byCdi: new Map(), wins: new Map(), totais: { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0 } };
+  return { office, area: office === 'president' ? 'BR' : UF, status, message, loaded, total, version: -1, sourceAt: null, nums: [], totals: [], names: new Map(), cities: [], byCdi: new Map(), wins: new Map(), totais: { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0, desde: '', semTotais: 0 } };
 }

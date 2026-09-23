@@ -58,6 +58,23 @@ export interface MunicipalPayload {
 export interface TotaisMunicipais {
   cidades: number; nominais: number; brancos: number; nulos: number;
   total: number; secoes: number; secoesTotais: number;
+  /**
+   * A hora da publicação mais antiga entre as cidades somadas.
+   *
+   * A soma é um mosaico de instantes: cada cidade traz o número de quando o TSE a publicou, e o
+   * total da disputa traz o agora. Sem esta hora na tela, a diferença entre os dois percentuais
+   * parece erro — foi a pergunta que ela existe para responder.
+   */
+  desde: string;
+  /**
+   * Quantas das cidades somadas não trouxeram o bloco de totais do TSE.
+   *
+   * Cidade assim era pulada pela soma, e o buraco não aparecia em lugar nenhum: a tela mostrava
+   * "126 de 817 cidades" como se fossem essas as apuradas, e a apuração pelas cidades dava 87,7%
+   * contra os 94% do painel. Cidade que não entra na conta precisa ser cidade que se vê não
+   * entrando na conta.
+   */
+  semTotais: number;
 }
 
 export type MunicipalResponse = MunicipalPayload | ({ unchanged: true } & Pick<MunicipalPayload, 'status' | 'message' | 'loaded' | 'total' | 'version'>);
@@ -95,7 +112,7 @@ interface MunRef { uf: string; cd: string; cdi: string; nm: string; capital: boo
  * `vb`, `vn`, `tv`, `st` e `ts` são campos do próprio arquivo municipal, não contas nossas — é o
  * que permite somar as cidades e conferir o total da disputa por outro caminho.
  */
-interface Row { vv: number; cand: [string, number][]; vb?: number; vn?: number; tv?: number; st?: number; ts?: number }
+interface Row { vv: number; cand: [string, number][]; vb?: number; vn?: number; tv?: number; st?: number; ts?: number; esq?: number }
 interface Job {
   key: string; mode: Mode; turn: Turn; office: Office; area: string; focus: string;
   status: MunicipalPayload['status']; message: string;
@@ -111,6 +128,8 @@ interface Job {
   pedidoEm: number;
   /** Live delta: last UF progress stamp per TSE municipality (uf+cd), the stamp each city was fetched at, and which UF files were read. */
   stamps: Map<string, AbCity>; fetched: Map<string, string>; abSeen: Set<string>; abRotation: number; fetches: number;
+  /** Quando cada cidade foi lida pela última vez. Encerrada não quer dizer nunca mais (ver `encerrada`). */
+  lidaEm: Map<string, number>;
   /** Versão já gravada em disco, e quando — o que evita reescrever um megabyte a cada volta. */
   salvo: { version: number; em: number };
   /**
@@ -146,6 +165,23 @@ const LIVE_CYCLE = Number(process.env.MUNICIPAL_CYCLE_MS) || 3 * 60_000;
 const ARCHIVE_TTL = 24 * 60 * 60_000;
 /** Parallel readers; the transport's low lane still caps requests in flight and per second. */
 const WORKERS = 16;
+
+/*
+ * A versão do que sabemos extrair de um arquivo municipal.
+ *
+ * Existe por causa de 23/09/2026: os totais por cidade (brancos, nulos, seções) passaram a ser
+ * lidos no meio da janela, e as 691 cidades de Minas já buscadas — e já encerradas pelo TSE —
+ * nunca mais foram relidas. Ficaram com zero nesses campos para sempre, e a soma as descartava
+ * em silêncio: 126 de 817 na tela, 87,7% contra os 94% do painel.
+ *
+ * Subir este número marca como suja toda linha lida por um parser mais velho, ignorando carimbo
+ * e o `and='f'` do andamento. Mudou o que se extrai do arquivo, sobe aqui — é a única coisa que
+ * faz o já coletado voltar a ser coletado.
+ */
+const ESQUEMA = 2;
+
+/** De quanto em quanto tempo uma cidade encerrada é conferida assim mesmo. */
+const RELEITURA = Number(process.env.MUNICIPAL_RELEITURA_MS) || 10 * 60_000;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const pad6 = (code: string) => code.padStart(6, '0');
 
@@ -245,7 +281,7 @@ export class MunicipalService {
     const key = `${mode}:${turn}:${area}:${office}`;
     let job = this.jobs.get(key);
     if (!job) {
-      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
+      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
       this.jobs.set(key, job);
       await this.loadBuilt(job);
     }
@@ -279,7 +315,7 @@ export class MunicipalService {
       const key = `${mode}:${turn}:${area}:${office}`;
       let job = this.jobs.get(key);
       if (!job) {
-        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
+        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
         this.jobs.set(key, job);
         void this.loadBuilt(job).then(() => { if (!job!.running && job!.status !== 'ready') void this.run(job!); });
         continue;
@@ -371,7 +407,7 @@ export class MunicipalService {
           const key = `historico:${turn}:${area}:${office}`;
           let job = this.jobs.get(key);
           if (!job) {
-            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
+            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
             this.jobs.set(key, job);
             await this.loadBuilt(job);
           }
@@ -401,11 +437,22 @@ export class MunicipalService {
     return readConfig(bruto, job.area).length > 0;
   }
 
-  /** Soma as cidades que têm os totais guardados. Cidade sem eles fica de fora, e a contagem diz. */
+  /** Soma toda cidade publicada. A que não trouxe o bloco de totais conta em `semTotais`. */
   private somar(job: Job | undefined): TotaisMunicipais {
-    const t: TotaisMunicipais = { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0 };
-    for (const linha of job?.rows.values() ?? []) {
-      if (linha.vv <= 0 || !linha.ts) continue;
+    const t: TotaisMunicipais = { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0, desde: '', semTotais: 0 };
+    for (const [cdi, linha] of job?.rows ?? []) {
+      if (linha.vv <= 0) continue;
+      const m = job?.muns.find(x => x.cdi === cdi);
+      const ht = m && job?.stamps.get(`${m.uf}${m.cd}`)?.ht;
+      if (ht && (!t.desde || ht < t.desde)) t.desde = ht;
+      /*
+       * Cidade publicada entra na conta, com ou sem o bloco de totais.
+       *
+       * Antes ela era pulada por `!linha.ts`, e o buraco não aparecia em lugar nenhum: a tela dizia
+       * "126 de 817 cidades" como se fossem só essas as apuradas. Agora toda cidade com voto conta,
+       * e a que não trouxe os totais vira `semTotais` — um número na tela, não um sumiço.
+       */
+      if (!linha.ts) t.semTotais++;
       t.cidades++;
       t.nominais += linha.vv;
       t.brancos += linha.vb ?? 0;
@@ -488,7 +535,10 @@ export class MunicipalService {
     for (const path of [this.builtPath(job), legacy]) {
       if (!path) continue;
       try {
-        const file = JSON.parse(await readFile(path, 'utf8')) as { c: [string, number][]; m: [string, string, string, number, number[]][]; t?: number[][] };
+        const file = JSON.parse(await readFile(path, 'utf8')) as {
+          c: [string, number][]; m: [string, string, string, number, number[]][]; t?: number[][];
+          k?: [string, string, string, number, number][]; b?: [string, string][];
+        };
         job.muns = file.m.map(([cdi, nm, uf]) => ({ cdi, nm, uf, cd: '', capital: false }));
         file.m.forEach(([cdi, , , vv, pairs], i) => {
           const cand: [string, number][] = [];
@@ -498,9 +548,12 @@ export class MunicipalService {
           cand.sort((a, b) => b[1] - a[1]);
           // `t` só existe nos arquivos gravados depois que os totais por cidade passaram a ser
           // guardados; sem ele a cidade entra sem eles, e a conferência aparece incompleta.
-          const [vb, vn, tv, st, ts] = file.t?.[i] ?? [];
-          job.rows.set(cdi, { vv, cand, vb, vn, tv, st, ts });
+          const [vb, vn, tv, st, ts, esq] = file.t?.[i] ?? [];
+          job.rows.set(cdi, { vv, cand, vb, vn, tv, st, ts, esq });
         });
+        // Os carimbos e as buscas voltam junto: é o que faz o restart retomar em vez de recomeçar.
+        for (const [k, stamp, ht, te, finished] of file.k ?? []) job.stamps.set(k, { stamp, ht, te, finished: !!finished });
+        for (const [cdi, stamp] of file.b ?? []) job.fetched.set(cdi, stamp);
         job.version = 1;
         job.salvo = { version: job.version, em: Date.now() };
         // Disco não é confirmação: para o ao vivo, isto é ponto de partida até a fonte responder.
@@ -524,10 +577,23 @@ export class MunicipalService {
      */
     const totais = payload.m.map(([cdi]) => {
       const r = job.rows.get(cdi);
-      return [r?.vb ?? 0, r?.vn ?? 0, r?.tv ?? 0, r?.st ?? 0, r?.ts ?? 0];
+      // O sexto campo é a versão do esquema: arquivo gravado por um parser mais velho volta do
+      // disco marcado como velho, e o laço rebusca a cidade em vez de servir zeros para sempre.
+      return [r?.vb ?? 0, r?.vn ?? 0, r?.tv ?? 0, r?.st ?? 0, r?.ts ?? 0, r?.esq ?? 0];
     });
+    /*
+     * `k` e `b`: os carimbos do andamento e o que já foi buscado com cada carimbo.
+     *
+     * Sem eles um processo novo nascia sem saber nada sobre nada: toda cidade entrava como suja e
+     * o restart custava rebuscar tudo — 8.983 arquivos, medidos em 23/09/2026. Guardando os dois,
+     * a coleta recomeça de onde parou e só vai ao TSE atrás do que o próprio TSE diz ter mudado.
+     *
+     * Só ao vivo: o histórico não tem andamento.
+     */
+    const carimbos = [...job.stamps].map(([k, c]) => [k, c.stamp, c.ht, c.te, c.finished ? 1 : 0]);
+    const buscados = [...job.fetched];
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(`${path}.tmp`, JSON.stringify({ c: payload.c, m: payload.m, t: totais }));
+    await writeFile(`${path}.tmp`, JSON.stringify({ c: payload.c, m: payload.m, t: totais, k: carimbos, b: buscados }));
     await rename(`${path}.tmp`, path);
     job.salvo = { version: job.version, em: Date.now() };
   }
@@ -596,8 +662,17 @@ export class MunicipalService {
           // belong here: drop them, otherwise the progress counts more cities than the state has.
           const keep = new Set(muns.map(m => m.cdi));
           for (const cdi of [...job.rows.keys()]) if (!keep.has(cdi)) { job.rows.delete(cdi); job.version++; }
+          /*
+           * `fetched` é indexado por `cdi`, e a poda usava `uf+cd` — as chaves nunca casavam, então
+           * ela apagava o mapa inteiro a cada vez que a lista de municípios era atribuída. Enquanto
+           * o mapa só vivia em memória isso passou despercebido; com os carimbos vindo do disco,
+           * era o que jogava fora justamente o que tinha acabado de ser lido.
+           *
+           * Os carimbos, esses sim, são indexados por `uf+cd`, e é neles que a poda faz sentido.
+           */
+          for (const k of [...job.fetched.keys()]) if (!keep.has(k)) job.fetched.delete(k);
           const keepCodes = new Set(muns.map(m => `${m.uf}${m.cd}`));
-          for (const k of [...job.fetched.keys()]) if (!keepCodes.has(k)) job.fetched.delete(k);
+          for (const k of [...job.stamps.keys()]) if (!keepCodes.has(k)) job.stamps.delete(k);
         }
         if (job.status === 'loading' && !job.rows.size) job.message = 'Buscando os resultados por município no TSE.';
         // A faixa municipal é uma só: quem não é a varredura da vez espera (ver `vezDeVarrer`).
@@ -654,7 +729,7 @@ export class MunicipalService {
    */
   async porCandidatura(mode: Mode, uf: string, turn: Turn, office: Office, numero: string): Promise<CandidaturaMunicipal> {
     const bruto = await this.get(mode, uf, turn, office);
-    if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado: 0, totais: { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0 }, numero, linhas: [] };
+    if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado: 0, totais: { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0, desde: '', semTotais: 0 }, numero, linhas: [] };
 
     /*
      * Cidade que já publicou e não deu voto nenhum também entra, com zero.
@@ -783,7 +858,8 @@ export class MunicipalService {
      * depois que a primeira volta termina.
      */
     const dirty = (focoCompleto ? job.muns : doFoco)
-      .filter(m => !job.rows.has(m.cdi) || (job.abSeen.has(m.uf) && stampOf(m) && job.fetched.get(m.cdi) !== stampOf(m)!.stamp))
+      .filter(m => !job.rows.has(m.cdi) || job.rows.get(m.cdi)!.esq !== ESQUEMA
+        || (job.abSeen.has(m.uf) && stampOf(m) && job.fetched.get(m.cdi) !== stampOf(m)!.stamp))
       .sort((a, b) => Number(b.uf === focus) - Number(a.uf === focus) || (stampOf(b)?.te || 0) - (stampOf(a)?.te || 0));
     if (!dirty.length) return 'idle';
     let i = 0;
@@ -816,9 +892,9 @@ export class MunicipalService {
         if (raw === NOT_MODIFIED) { job.fetched.set(m.cdi, stamp); continue; }
         try {
           const row = parseMunicipal(raw, { election: target.election, cd: m.cd, office: job.office, uf: m.uf });
-          const previous = job.rows.get(m.cdi);
-          if (!previous || previous.vv !== row.vv || JSON.stringify(previous.cand) !== JSON.stringify(row.cand)) { job.rows.set(m.cdi, { vv: row.vv, cand: row.cand, vb: row.vb, vn: row.vn, tv: row.tv, st: row.st, ts: row.ts }); job.version++; }
+          this.guardar(job, m.cdi, row);
           job.fetched.set(m.cdi, stamp);
+          job.lidaEm.set(m.cdi, Date.now());
         } catch (e) { this.transport.reject(url, e instanceof Error ? e.message : 'Arquivo municipal inválido'); }
       }
     };
@@ -877,6 +953,28 @@ export class MunicipalService {
   }
 
   /**
+   * Grava a linha de uma cidade, e diz se alguma coisa mudou.
+   *
+   * A comparação olhava só `vv` e `cand`. Um arquivo cujos votos não mudaram mas que agora traz
+   * campos que antes não líamos era descartado inteiro — o segundo caminho pelo qual as cidades
+   * de Minas ficaram congeladas em 23/09/2026. Aqui a linha nova entra sempre que qualquer campo
+   * diferir, inclusive a versão do esquema.
+   */
+  private guardar(job: Job, cdi: string, row: Row): boolean {
+    const nova: Row = { ...row, esq: ESQUEMA };
+    const velha = job.rows.get(cdi);
+    const igual = velha
+      && velha.esq === nova.esq && velha.vv === nova.vv
+      && velha.vb === nova.vb && velha.vn === nova.vn && velha.tv === nova.tv
+      && velha.st === nova.st && velha.ts === nova.ts
+      && JSON.stringify(velha.cand) === JSON.stringify(nova.cand);
+    job.rows.set(cdi, nova);
+    if (igual) return false;
+    job.version++;
+    return true;
+  }
+
+  /**
    * A cidade acabou e nós já temos o resultado dela.
    *
    * `and='f'` no arquivo de andamento é o TSE dizendo que a totalização daquele município
@@ -886,7 +984,22 @@ export class MunicipalService {
    */
   private encerrada(job: Job, m: MunRef): boolean {
     const carimbo = job.stamps.get(`${m.uf}${m.cd}`);
-    return !!carimbo?.finished && job.rows.has(m.cdi) && job.fetched.get(m.cdi) === carimbo.stamp;
+    if (!carimbo?.finished || job.fetched.get(m.cdi) !== carimbo.stamp) return false;
+    const linha = job.rows.get(m.cdi);
+    /*
+     * Duas razões para reler uma cidade que o TSE já declarou encerrada.
+     *
+     * A primeira é o esquema: linha lida por um parser mais velho não tem os campos que hoje
+     * sabemos extrair, e nenhum carimbo vai mudar para avisar disso. Foi o que congelou 691
+     * cidades de Minas em 23/09/2026.
+     *
+     * A segunda é não confiar em "encerrada" como palavra final nossa. Uma conferência a cada
+     * `RELEITURA` custa 853 requisições por estado a cada dez minutos — nada perto do teto do
+     * TSE — e é o que garante que o mapa inteiro continue certo até o fim, em vez de certo até o
+     * momento em que paramos de olhar.
+     */
+    if (!linha || linha.esq !== ESQUEMA) return false;
+    return Date.now() - (job.lidaEm.get(m.cdi) ?? 0) < RELEITURA;
   }
 
   /** One pass over the municipalities, the viewer's own state first. Returns true when nothing was left to try. */
@@ -919,10 +1032,8 @@ export class MunicipalService {
         if (raw === NOT_MODIFIED) continue;
         try {
           const row = parseMunicipal(raw, { election: target.election, cd: m.cd, office: job.office, uf: m.uf });
-          const previous = job.rows.get(m.cdi);
-          if (!previous || previous.vv !== row.vv || JSON.stringify(previous.cand) !== JSON.stringify(row.cand)) {
-            job.rows.set(m.cdi, { vv: row.vv, cand: row.cand, vb: row.vb, vn: row.vn, tv: row.tv, st: row.st, ts: row.ts }); job.version++;
-          }
+          this.guardar(job, m.cdi, row);
+          job.lidaEm.set(m.cdi, Date.now());
           // O carimbo da busca também é anotado aqui, senão `encerrada` nunca reconhece as cidades
           // que vieram pela varredura completa e elas continuam sendo repedidas para sempre.
           if (job.mode !== 'historico') job.fetched.set(m.cdi, job.stamps.get(`${m.uf}${m.cd}`)?.stamp ?? '');
