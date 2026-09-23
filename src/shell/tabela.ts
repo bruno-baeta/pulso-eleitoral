@@ -179,7 +179,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   const mais = folha.querySelector('.mais') as HTMLElement;
 
   type Linha = { nome: string; uf: string; busca: string; votos: number; validos: number; pos: number };
-  let linhas: Linha[] = [], quantas = 200, relogio = 0, fechada = false;
+  let linhas: Linha[] = [], quantas = 200, relogio = 0, fechada = false, parcial = '';
 
   const desenhar = () => {
     const q = dobrar(busca.value.trim());
@@ -190,8 +190,8 @@ export function abrirCandidato(o: CandidatoOpcoes) {
       + `<td class="r">${r.validos ? fmtPct(r.votos / r.validos * 100, 1) : '—'}</td>`
       + `<td class="r"><span class="pos" style="--c:${esc(o.cor)}">${r.pos}º</span></td></tr>`).join('')
       || (linhas.length ? `<tr><td colspan="5" class="n">Nenhuma cidade encontrada.</td></tr>` : '');
-    mais.textContent = lista.length > quantas
-      ? `Mostrando ${fmtInt(quantas)} de ${fmtInt(lista.length)} cidades · role para ver mais` : '';
+    const rolagem = lista.length > quantas ? `Mostrando ${fmtInt(quantas)} de ${fmtInt(lista.length)} cidades · role para ver mais` : '';
+    mais.textContent = [rolagem, parcial].filter(Boolean).join(' · ');
   };
 
   const carregar = async () => {
@@ -222,9 +222,18 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     }
     linhas.sort((a, b) => b.votos - a.votos);
     const pronto = d.status === 'ready';
-    estado.textContent = pronto ? ''
+    /*
+     * Com cidades na mão, a folha mostra as cidades — não um aviso de carregamento.
+     *
+     * O aviso ocupava o lugar da lista mesmo quando ela já estava inteira, e era o que dava a
+     * impressão de que nada tinha chegado. Ele volta a aparecer só quando não há uma linha sequer
+     * para mostrar. Se ainda faltam cidades mas já há o que ver, isso é dito no rodapé, junto da
+     * contagem — a lista não pode passar por completa quando não está.
+     */
+    estado.textContent = pronto || linhas.length ? ''
       : d.total ? `Carregando municípios · ${fmtInt(d.loaded ?? 0)} de ${fmtInt(d.total)}`
       : (d.message || 'Carregando municípios…');
+    parcial = !pronto && d.total ? `${fmtInt(d.loaded ?? 0)} de ${fmtInt(d.total)} cidades recebidas` : '';
     desenhar();
     if (!pronto) relogio = window.setTimeout(carregar, 2500);
   };
