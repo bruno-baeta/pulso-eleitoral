@@ -576,18 +576,31 @@ export class MunicipalService {
     const bruto = await this.get(mode, uf, turn, office);
     if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado: 0, numero, linhas: [] };
 
+    /*
+     * Cidade que já publicou e não deu voto nenhum também entra, com zero.
+     *
+     * Ficar de fora fazia as duas coisas se confundirem: "a candidatura não teve voto aqui" e "esta
+     * cidade ainda não publicou" sumiam da lista do mesmo jeito. Com o zero na tela, o tamanho da
+     * lista passa a ser o número de cidades apuradas, e a ausência vira informação.
+     *
+     * `pos` zero significa sem colocação — não há como ser primeiro em lugar onde não se teve voto.
+     */
     const linhas: CandidaturaMunicipal['linhas'] = [];
     const indice = bruto.c.findIndex(([n]) => n === numero);
-    if (indice >= 0) {
-      for (const [, nome, ufCidade, validos, pares] of bruto.m) {
+    for (const [, nome, ufCidade, validos, pares] of bruto.m) {
+      if (validos <= 0) continue;                       // esta cidade ainda não publicou
+      let votos = 0, pos = 0;
+      if (indice >= 0) {
         for (let k = 0; k < pares.length; k += 2) {
           if (pares[k] !== indice) continue;
-          linhas.push([nome, ufCidade, pares[k + 1], validos, k / 2 + 1]);
+          votos = pares[k + 1];
+          pos = k / 2 + 1;
           break;
         }
       }
-      linhas.sort((a, b) => b[2] - a[2]);
+      linhas.push([nome, ufCidade, votos, validos, pos]);
     }
+    linhas.sort((a, b) => b[2] - a[2] || a[0].localeCompare(b[0], 'pt-BR'));
     const cidadesComResultado = bruto.m.reduce((t, [, , , vv]) => t + (vv > 0 ? 1 : 0), 0);
     return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado, numero, linhas };
   }

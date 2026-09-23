@@ -195,8 +195,8 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     corpo.innerHTML = lista.slice(0, quantas).map(({ r, i }) =>
       `<tr><td class="n">${i + 1}º</td><td>${esc(r.nome)} <span class="n">(${esc(r.uf)})</span></td>`
       + `<td class="r">${fmtInt(r.votos)}</td>`
-      + `<td class="r">${r.validos ? fmtPct(r.votos / r.validos * 100, 1) : '—'}</td>`
-      + `<td class="r"><span class="pos" style="--c:${esc(o.cor)}">${r.pos}º</span></td></tr>`).join('')
+      + `<td class="r">${r.validos && r.votos ? fmtPct(r.votos / r.validos * 100, 1) : '—'}</td>`
+      + `<td class="r">${r.pos ? `<span class="pos" style="--c:${esc(o.cor)}">${r.pos}º</span>` : '<span class="n">—</span>'}</td></tr>`).join('')
       || (linhas.length ? `<tr><td colspan="5" class="n">Nenhuma cidade encontrada.</td></tr>` : '');
     const rolagem = lista.length > quantas ? `Mostrando ${fmtInt(quantas)} de ${fmtInt(lista.length)} cidades · role para ver mais` : '';
     mais.textContent = [rolagem, conferencia, parcial].filter(Boolean).join(' · ');
