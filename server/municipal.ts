@@ -42,6 +42,16 @@ export interface MunicipalPayload {
 }
 export type MunicipalResponse = MunicipalPayload | ({ unchanged: true } & Pick<MunicipalPayload, 'status' | 'message' | 'loaded' | 'total' | 'version'>);
 
+/** O que a folha de cidades desenha, e nada mais: [nome, uf, votos, válidos na cidade, colocação]. */
+export interface CandidaturaMunicipal {
+  status: MunicipalPayload['status'];
+  message: string;
+  loaded: number;
+  total: number;
+  numero: string;
+  linhas: [string, string, number, number, number][];
+}
+
 interface MunRef { uf: string; cd: string; cdi: string; nm: string; capital: boolean }
 interface Row { vv: number; cand: [string, number][] }
 interface Job {
@@ -464,6 +474,35 @@ export class MunicipalService {
    * Live delta pass. The viewer's UF file every AB_INTERVAL; for the president (Brazil) one more UF per pass, in rotation.
    * Returns false when no progress file could be read yet, 'idle' when nothing changed, true after fetching changed cities.
    */
+  /**
+   * As cidades de uma candidatura só, já prontas para a folha desenhar.
+   *
+   * O caminho normal devolve o mapa inteiro — toda cidade com todos os candidatos —, e a folha
+   * jogava fora tudo menos um nome: 109 KB no governador de Minas, 748 KB na presidência. Filtrar
+   * aqui manda uma fração disso e tira do navegador a varredura de milhares de pares.
+   *
+   * `pos` é a colocação da candidatura naquela cidade, que é o que a coluna da direita mostra; ela
+   * sai da ordem publicada pelo TSE, não de conta nossa.
+   */
+  async porCandidatura(mode: Mode, uf: string, turn: Turn, office: Office, numero: string): Promise<CandidaturaMunicipal> {
+    const bruto = await this.get(mode, uf, turn, office);
+    if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, numero, linhas: [] };
+
+    const linhas: CandidaturaMunicipal['linhas'] = [];
+    const indice = bruto.c.findIndex(([n]) => n === numero);
+    if (indice >= 0) {
+      for (const [, nome, ufCidade, validos, pares] of bruto.m) {
+        for (let k = 0; k < pares.length; k += 2) {
+          if (pares[k] !== indice) continue;
+          linhas.push([nome, ufCidade, pares[k + 1], validos, k / 2 + 1]);
+          break;
+        }
+      }
+      linhas.sort((a, b) => b[2] - a[2]);
+    }
+    return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, numero, linhas };
+  }
+
   /**
    * Uma varredura de cada vez, e é a da tela.
    *

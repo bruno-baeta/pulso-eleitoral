@@ -198,29 +198,27 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     if (fechada) return;
     type Municipal = {
       status: string; message?: string; loaded?: number; total?: number;
-      c: [string, number][]; m: [string, string, string, number, number[]][];
+      /** [nome, uf, votos, válidos na cidade, colocação] — já filtrado e ordenado pelo servidor. */
+      linhas: [string, string, number, number, number][];
     };
     let d: Municipal | null = null;
     try {
-      const r = await fetch(`/api/municipal?mode=${o.mode}&uf=${o.uf}&turn=${o.turn}&office=${o.office}`, { cache: 'no-store' });
+      /*
+       * `numero` faz o servidor mandar só as cidades desta candidatura.
+       *
+       * Antes vinha o mapa inteiro — toda cidade com todos os candidatos — e o navegador varria
+       * milhares de pares para ficar com um nome: 109 KB no governador de Minas e 748 KB na
+       * presidência, quase tudo descartado. Pela rede de casa era o intervalo entre clicar e ver.
+       */
+      const r = await fetch(`/api/municipal?mode=${o.mode}&uf=${o.uf}&turn=${o.turn}&office=${o.office}&numero=${encodeURIComponent(o.numero)}`, { cache: 'no-store' });
       d = r.ok ? await r.json() as Municipal : null;
     } catch { d = null; }
     if (fechada) return;
     if (!d) { estado.textContent = 'Não foi possível carregar os municípios agora. Tentando de novo…'; relogio = window.setTimeout(carregar, 3000); return; }
-    const idx = (d.c || []).findIndex(x => x[0] === o.numero);
-    linhas = [];
-    if (idx >= 0) {
-      for (const [, nome, uf, validos, pares] of d.m || []) {
-        for (let k = 0; k < pares.length; k += 2) {
-          if (pares[k] === idx) {
-            const cidade = titulo(nome);
-            linhas.push({ nome: cidade, uf, busca: dobrar(cidade), votos: pares[k + 1], validos, pos: k / 2 + 1 });
-            break;
-          }
-        }
-      }
-    }
-    linhas.sort((a, b) => b.votos - a.votos);
+    linhas = (d.linhas || []).map(([nome, uf, votos, validos, pos]) => {
+      const cidade = titulo(nome);
+      return { nome: cidade, uf, busca: dobrar(cidade), votos, validos, pos };
+    });
     const pronto = d.status === 'ready';
     /*
      * Com cidades na mão, a folha mostra as cidades — não um aviso de carregamento.

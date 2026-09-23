@@ -81,10 +81,22 @@ const municipalSchema = { type: 'object', properties: {
   mode: querySchema.properties.mode, uf: querySchema.properties.uf, turn: querySchema.properties.turn,
   office: { type: 'string', enum: ['president', 'governor', 'senate', 'federal', 'state'] },
   v: { type: 'integer', minimum: 0 },
+  numero: { type: 'string', pattern: '^\\d{1,5}$' },
 }, required: ['office'], additionalProperties: false };
 /** Território: results per municipality for one UF + office, fetched on demand (see server/municipal.ts). */
-app.get<{ Querystring: { mode: Mode; uf: string; turn: Turn; office: Office; v?: number } }>('/api/municipal', { schema: { querystring: municipalSchema } }, async (request, reply) => {
-  const { mode, uf, turn, office, v } = request.query;
+app.get<{ Querystring: { mode: Mode; uf: string; turn: Turn; office: Office; v?: number; numero?: string } }>('/api/municipal', { schema: { querystring: municipalSchema } }, async (request, reply) => {
+  const { mode, uf, turn, office, v, numero } = request.query;
+  /*
+   * Com `numero`, só as cidades daquela candidatura — e só o que a folha desenha.
+   *
+   * A folha de cidades baixava o mapa inteiro para mostrar um nome: 109 KB no governador e 748 KB
+   * na presidência, com todos os outros candidatos de todas as cidades indo junto para serem
+   * descartados no navegador. Pela rede de casa isso é o meio segundo entre clicar e ver.
+   */
+  if (numero) {
+    reply.header('Cache-Control', 'no-store');
+    return municipal.porCandidatura(mode, uf, turn, office, numero);
+  }
   const result = await municipal.get(mode, uf, turn, office, v);
   // A finished 2022 build never changes, so the browser may keep it and only ask whether it is
   // still the same: switching states reloads the page, and this turns the megabyte it used to
