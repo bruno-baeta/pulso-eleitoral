@@ -160,6 +160,13 @@ export interface CandidatoOpcoes {
   cor: string;
   mode: string; uf: string; turn: number | string;
   office: string;
+  /**
+   * O instante que a tela está reproduzindo, ou nulo no ao vivo.
+   *
+   * Esta folha não fala com `dados.ts` de propósito — recebe modo, estado e turno por opção —, e o
+   * instante segue a mesma regra. Quem monta a folha sabe se o painel está no agora.
+   */
+  momento?: () => number | null;
 }
 
 export function abrirCandidato(o: CandidatoOpcoes) {
@@ -178,8 +185,11 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     + `<div class="rolo"><table><colgroup><col style="width:9%"><col style="width:45%">`
     + `<col style="width:16%"><col style="width:15%"><col style="width:15%"></colgroup>`
     + `<thead><tr><th>#</th><th>Cidade</th><th class="r">Votos</th><th class="r">% válidos</th>`
-    + `<th class="r">Posição na cidade</th></tr></thead><tbody></tbody></table><div class="mais"></div></div>`
-    + `<div class="pe">Votos por município publicados pelo TSE.</div></div>`;
+    + `<th class="r">Posição na cidade</th></tr></thead><tbody></tbody></table></div>`
+    // A conferência é rodapé fixo, não fim de lista: dentro da rolagem ela ia embora na primeira
+    // rolada, e é justamente a linha que diz se a lista fecha com o total da candidatura.
+    + `<div class="mais"></div>`
+    + `</div>`;
 
   const folha = fundo.querySelector('.tbl-folha')!;
   const busca = folha.querySelector('input')!;
@@ -189,7 +199,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   const mais = folha.querySelector('.mais') as HTMLElement;
 
   type Linha = { nome: string; uf: string; busca: string; votos: number; validos: number; pos: number };
-  let linhas: Linha[] = [], quantas = 200, relogio = 0, fechada = false, parcial = '', conferencia = '';
+  let linhas: Linha[] = [], quantas = 200, relogio = 0, fechada = false, vazio = '', conferencia = '';
 
   const desenhar = () => {
     const q = dobrar(busca.value.trim());
@@ -200,8 +210,16 @@ export function abrirCandidato(o: CandidatoOpcoes) {
       + `<td class="r">${r.validos && r.votos ? fmtPct(r.votos / r.validos * 100, 1) : '—'}</td>`
       + `<td class="r">${r.pos ? `<span class="pos" style="--c:${esc(o.cor)}">${r.pos}º</span>` : '<span class="n">—</span>'}</td></tr>`).join('')
       || (linhas.length ? `<tr><td colspan="5" class="n">Nenhuma cidade encontrada.</td></tr>` : '');
-    const rolagem = lista.length > quantas ? `Mostrando ${fmtInt(quantas)} de ${fmtInt(lista.length)} cidades · role para ver mais` : '';
-    mais.textContent = [rolagem, conferencia, parcial].filter(Boolean).join(' · ');
+    /*
+     * Uma frase, não três coladas por pontos.
+     *
+     * Dava "0 de 4.009 votos localizados · 0 de 853 cidades já publicadas pelo TSE" — dois zeros e
+     * três números para dizer uma coisa só: ainda não tem nada. Sem cidade nenhuma, é isso que a
+     * linha fala, e ponto.
+     */
+    const rolagem = lista.length > quantas ? `Mostrando ${fmtInt(quantas)} de ${fmtInt(lista.length)} cidades` : '';
+    mais.textContent = !linhas.length ? vazio
+      : [rolagem, conferencia].filter(Boolean).join(' · ');
   };
 
   const carregar = async () => {
@@ -213,6 +231,12 @@ export function abrirCandidato(o: CandidatoOpcoes) {
       linhas: [string, string, number, number, number][];
     };
     let d: Municipal | null = null;
+    /*
+     * `at` é o instante que a tela está reproduzindo. O servidor guarda as mudanças por cidade com
+     * a hora, então a folha mostra as cidades como estavam ali — e não o retrato de agora, que no
+     * minuto zero devolvia a apuração inteira ao lado de um painel em 0,0%.
+     */
+    const at = o.momento?.();
     try {
       /*
        * `numero` faz o servidor mandar só as cidades desta candidatura.
@@ -221,7 +245,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
        * milhares de pares para ficar com um nome: 109 KB no governador de Minas e 748 KB na
        * presidência, quase tudo descartado. Pela rede de casa era o intervalo entre clicar e ver.
        */
-      const r = await fetch(`/api/municipal?mode=${o.mode}&uf=${o.uf}&turn=${o.turn}&office=${o.office}&numero=${encodeURIComponent(o.numero)}`, { cache: 'no-store' });
+      const r = await fetch(`/api/municipal?mode=${o.mode}&uf=${o.uf}&turn=${o.turn}&office=${o.office}&numero=${encodeURIComponent(o.numero)}${at == null ? '' : `&at=${Math.round(at)}`}`, { cache: 'no-store' });
       d = r.ok ? await r.json() as Municipal : null;
     } catch { d = null; }
     if (fechada) return;
@@ -239,7 +263,10 @@ export function abrirCandidato(o: CandidatoOpcoes) {
      * para mostrar. Se ainda faltam cidades mas já há o que ver, isso é dito no rodapé, junto da
      * contagem — a lista não pode passar por completa quando não está.
      */
-    estado.textContent = pronto || linhas.length ? ''
+    // Reproduzindo um instante em que nada tinha sido publicado, a tabela em branco precisa dizer
+    // por que está em branco — senão parece falha de carregamento.
+    estado.textContent = at != null && !linhas.length ? 'Nenhuma cidade tinha publicado resultado neste instante da apuração.'
+      : pronto || linhas.length ? ''
       : d.total ? `Carregando municípios · ${fmtInt(d.loaded ?? 0)} de ${fmtInt(d.total)}`
       : (d.message || 'Carregando municípios…');
     /*
@@ -249,9 +276,8 @@ export function abrirCandidato(o: CandidatoOpcoes) {
      * a folha passava por completa mostrando 5% dos votos da candidatura.
      */
     const comResultado = d.cidadesComResultado ?? 0;
-    parcial = d.total && comResultado < d.total
-      ? `${fmtInt(comResultado)} de ${fmtInt(d.total)} cidades já publicadas pelo TSE`
-      : '';
+    vazio = comResultado ? 'Esta candidatura ainda não teve voto em nenhuma cidade publicada.'
+      : `Nenhuma das ${fmtInt(d.total ?? 0)} cidades publicou resultado ainda.`;
 
     /*
      * A folha confere a própria soma contra o total da candidatura.
@@ -281,11 +307,12 @@ export function abrirCandidato(o: CandidatoOpcoes) {
       + `</dl>`;
 
     const somado = linhas.reduce((t, r) => t + r.votos, 0);
-    conferencia = !o.votos ? ''
-      : somado >= o.votos ? `${fmtInt(somado)} votos em ${fmtInt(linhas.length)} cidades — a soma fecha com o total da candidatura`
-      : `${fmtInt(somado)} de ${fmtInt(o.votos)} votos localizados`;
+    conferencia = !o.votos ? `${fmtInt(somado)} votos em ${fmtInt(linhas.length)} cidades`
+      : somado >= o.votos ? `Os ${fmtInt(somado)} votos da candidatura estão todos nesta lista`
+      : `${fmtInt(somado)} dos ${fmtInt(o.votos)} votos da candidatura · o resto está em cidades que ainda não publicaram`;
     desenhar();
-    if (!pronto) relogio = window.setTimeout(carregar, 2500);
+    // Reproduzindo, o instante não anda sozinho: quem repede é o transporte.
+    if (!pronto && at == null) relogio = window.setTimeout(carregar, 2500);
   };
 
   const fechar = () => { fechada = true; clearTimeout(relogio); fundo.remove(); removeEventListener('keydown', naTecla); };
@@ -392,7 +419,8 @@ const CSS = `
   .tbl-folha .estado:not(:empty) { padding: 1.2vh 2.2vw; font-size: clamp(10px, .78vw, 15px);
     color: #6a6863; border-bottom: 1px solid #141817; }
   .tbl-folha .pos { color: #b9b6ae; }
-  .tbl-folha .mais:not(:empty), .tbl-folha .pe { padding: 1.4vh 2.2vw;
+  .tbl-folha .mais, .tbl-folha .pe { padding: 1.4vh 2.2vw; border-top: 1px solid #201f1d;
+    min-height: 1.2em;
     font-size: clamp(9px, .72vw, 14px); color: #4f544f; }
   .tbl-folha .pe { border-top: 1px solid #1c211f; }
 `;

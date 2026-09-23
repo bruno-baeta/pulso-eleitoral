@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { ARCHIVE, OFFICES, STATES, type Mode, type Office, type Race, type Turn } from '../shared/types.ts';
 import { BASES, array, numeric, object, officeCode, str, tseTime, type ElectionRef } from './tse.ts';
@@ -130,6 +130,8 @@ interface Job {
   stamps: Map<string, AbCity>; fetched: Map<string, string>; abSeen: Set<string>; abRotation: number; fetches: number;
   /** Quando cada cidade foi lida pela última vez. Encerrada não quer dizer nunca mais (ver `encerrada`). */
   lidaEm: Map<string, number>;
+  /** Cidades que mudaram desde a última linha gravada, esperando virar um instante no disco. */
+  mudadas: Map<string, Row>;
   /** Versão já gravada em disco, e quando — o que evita reescrever um megabyte a cada volta. */
   salvo: { version: number; em: number };
   /**
@@ -271,7 +273,7 @@ export class MunicipalService {
 
   private area(office: Office, uf: string) { return office === 'president' ? 'BR' : uf; }
 
-  async get(mode: Mode, uf: string, turn: Turn, office: Office, since?: number): Promise<MunicipalResponse> {
+  async get(mode: Mode, uf: string, turn: Turn, office: Office, since?: number, at?: number): Promise<MunicipalResponse> {
     const area = this.area(office, uf);
     const base = { mode, uf, turn, office, area, sourceAt: null, c: [], m: [], n: {}, loaded: 0, total: 0, version: 0, totais: this.somar(undefined) };
     if (!municipalOffices(turn).includes(office)) return { ...base, status: 'unavailable', message: 'Sem 2º turno para este cargo.' };
@@ -281,7 +283,7 @@ export class MunicipalService {
     const key = `${mode}:${turn}:${area}:${office}`;
     let job = this.jobs.get(key);
     if (!job) {
-      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
+      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
       this.jobs.set(key, job);
       await this.loadBuilt(job);
     }
@@ -301,6 +303,13 @@ export class MunicipalService {
      */
     this.warmSiblings(mode, uf, turn, office);
     if (!job.running && !(mode === 'historico' && job.status === 'ready')) void this.run(job);
+    /*
+     * Reproduzindo, a tabela vem da gravação — não do estado de agora.
+     *
+     * O cache por versão não vale aqui: a versão é a do ao vivo, e dois instantes diferentes têm a
+     * mesma. Por isso o atalho de `since` fica depois desta saída.
+     */
+    if (at !== undefined) return this.payload(job, uf, await this.linhasEm(job, at));
     if (since !== undefined && since === job.version && job.body) {
       return { unchanged: true, status: job.status, message: job.message, loaded: job.muns.length ? Math.min(job.rows.size, job.muns.length) : 0, total: job.muns.length, version: job.version };
     }
@@ -315,7 +324,7 @@ export class MunicipalService {
       const key = `${mode}:${turn}:${area}:${office}`;
       let job = this.jobs.get(key);
       if (!job) {
-        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
+        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
         this.jobs.set(key, job);
         void this.loadBuilt(job).then(() => { if (!job!.running && job!.status !== 'ready') void this.run(job!); });
         continue;
@@ -407,7 +416,7 @@ export class MunicipalService {
           const key = `historico:${turn}:${area}:${office}`;
           let job = this.jobs.get(key);
           if (!job) {
-            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
+            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
             this.jobs.set(key, job);
             await this.loadBuilt(job);
           }
@@ -438,9 +447,9 @@ export class MunicipalService {
   }
 
   /** Soma toda cidade publicada. A que não trouxe o bloco de totais conta em `semTotais`. */
-  private somar(job: Job | undefined): TotaisMunicipais {
+  private somar(job: Job | undefined, linhas?: Map<string, Row>): TotaisMunicipais {
     const t: TotaisMunicipais = { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0, desde: '', semTotais: 0 };
-    for (const [cdi, linha] of job?.rows ?? []) {
+    for (const [cdi, linha] of linhas ?? job?.rows ?? []) {
       if (linha.vv <= 0) continue;
       const m = job?.muns.find(x => x.cdi === cdi);
       const ht = m && job?.stamps.get(`${m.uf}${m.cd}`)?.ht;
@@ -464,7 +473,12 @@ export class MunicipalService {
     return t;
   }
 
-  private payload(job: Job, uf: string): MunicipalPayload {
+  /**
+   * `linhas` põe no ar um instante gravado em vez do estado de agora; o cache de corpo é pulado,
+   * porque ele guarda o retrato do ao vivo.
+   */
+  private payload(job: Job, uf: string, linhas?: Map<string, Row>): MunicipalPayload {
+    const rows = linhas ?? job.rows;
     const race = this.hooks.race(job.mode, uf, job.turn, job.office);
     const namesAt = race ? race.receivedAt : 0;
     /*
@@ -480,14 +494,14 @@ export class MunicipalService {
       status = 'unavailable';
       message = `O TSE não publica resultado por município ${job.area === 'BR' ? 'nesta fonte' : `de ${job.area} nesta fonte`}.`;
     }
-    if (job.body && job.body.version === job.version && job.body.namesAt === namesAt) return { ...job.body.payload, uf, status, message, fetches: job.fetches, sourceAt: job.sourceAt };
+    if (!linhas && job.body && job.body.version === job.version && job.body.namesAt === namesAt) return { ...job.body.payload, uf, status, message, fetches: job.fetches, sourceAt: job.sourceAt };
     const totals = new Map<string, number>();
-    for (const row of job.rows.values()) for (const [n, v] of row.cand) totals.set(n, (totals.get(n) || 0) + v);
+    for (const row of rows.values()) for (const [n, v] of row.cand) totals.set(n, (totals.get(n) || 0) + v);
     const c = [...totals].sort((a, b) => b[1] - a[1]);
     const index = new Map(c.map(([n], i) => [n, i]));
     const byCdi = new Map(job.muns.map(m => [m.cdi, m]));
     const m: MunicipalPayload['m'] = [];
-    for (const [cdi, row] of job.rows) {
+    for (const [cdi, row] of rows) {
       const ref = byCdi.get(cdi);
       const entry: MunicipalPayload['m'][number] = [cdi, ref?.nm ?? cdi, ref?.uf ?? job.area, row.vv, row.cand.flatMap(([n, v]) => [index.get(n)!, v])];
       const ht = ref && job.stamps.get(`${ref.uf}${ref.cd}`)?.ht;
@@ -497,10 +511,10 @@ export class MunicipalService {
     const n: MunicipalPayload['n'] = {};
     if (race) for (const cand of race.candidates) if (totals.has(cand.number)) n[cand.number] = [cand.name, cand.party];
     const payload: MunicipalPayload = {
-      mode: job.mode, uf, turn: job.turn, office: job.office, area: job.area, status, message, totais: this.somar(job),
-      loaded: job.muns.length ? Math.min(job.rows.size, job.muns.length) : 0, total: job.muns.length, version: job.version, sourceAt: job.sourceAt, fetches: job.fetches, c, m, n,
+      mode: job.mode, uf, turn: job.turn, office: job.office, area: job.area, status, message, totais: this.somar(job, linhas),
+      loaded: job.muns.length ? Math.min(rows.size, job.muns.length) : 0, total: job.muns.length, version: job.version, sourceAt: job.sourceAt, fetches: job.fetches, c, m, n,
     };
-    job.body = { version: job.version, namesAt, payload };
+    if (!linhas) job.body = { version: job.version, namesAt, payload };
     return payload;
   }
 
@@ -517,6 +531,58 @@ export class MunicipalService {
     if (job.mode === 'historico') return `${this.dataDir}/municipal/historico-t${job.turn}-${job.area.toLowerCase()}-${job.office}.json`;
     const sessao = this.hooks.session(job.mode) || 'sem-sessao';
     return `${this.dataDir}/municipal/${job.mode}/${sessao}/t${job.turn}-${job.area.toLowerCase()}-${job.office}.json`;
+  }
+
+  /**
+   * Onde ficam os instantes: a mesma chave do arquivo montado, em NDJSON.
+   *
+   * O arquivo montado é o retrato de agora e é reescrito por cima. Este é acréscimo puro, uma
+   * linha por vez em que alguma cidade mudou — é dele que sai a tabela de um instante passado.
+   */
+  private gravacaoPath(job: Job) {
+    if (job.mode === 'historico') return null;   // 2022 é resultado fechado: não tem instantes
+    const sessao = this.hooks.session(job.mode) || 'sem-sessao';
+    return `${this.dataDir}/municipal-instantes/${job.mode}/${sessao}/t${job.turn}-${job.area.toLowerCase()}-${job.office}.ndjson`;
+  }
+
+  /**
+   * Grava as cidades que mudaram, com a hora.
+   *
+   * Sem isto a tabela de cidades só sabia dizer o agora: reproduzindo o minuto zero da apuração,
+   * abrir um candidato devolvia "526.640 de 526.640 seções · 100,00%" ao lado de um painel em
+   * 0,0%. Cada linha é um acréscimo pequeno — só as cidades que mudaram —, e a tabela de qualquer
+   * instante é a soma das linhas até ele.
+   */
+  private async gravarInstante(job: Job) {
+    const path = this.gravacaoPath(job);
+    if (!path || !job.mudadas.size) return;
+    const linhas = [...job.mudadas].map(([cdi, r]) => [cdi, r.vv, r.cand, r.vb ?? 0, r.vn ?? 0, r.tv ?? 0, r.st ?? 0, r.ts ?? 0]);
+    job.mudadas.clear();
+    try {
+      await mkdir(dirname(path), { recursive: true });
+      await appendFile(path, JSON.stringify({ t: Date.now(), r: linhas }) + '\n');
+    } catch (e) { console.error('Municípios (instantes):', e instanceof Error ? e.message : e); }
+  }
+
+  /**
+   * A tabela como estava em `at`: as linhas gravadas até aquele instante, dobradas uma sobre a
+   * outra. Cidade que ainda não tinha mudado simplesmente não está lá, que é o certo.
+   */
+  private async linhasEm(job: Job, at: number): Promise<Map<string, Row>> {
+    const path = this.gravacaoPath(job);
+    const rows = new Map<string, Row>();
+    if (!path) return rows;
+    let texto = '';
+    try { texto = await readFile(path, 'utf8'); } catch { return rows; }
+    for (const linha of texto.split('\n')) {
+      if (!linha) continue;
+      try {
+        const { t, r } = JSON.parse(linha) as { t: number; r: [string, number, [string, number][], number, number, number, number, number][] };
+        if (t > at) break;              // o arquivo é cronológico: o primeiro depois encerra a volta
+        for (const [cdi, vv, cand, vb, vn, tv, st, ts] of r) rows.set(cdi, { vv, cand, vb, vn, tv, st, ts, esq: ESQUEMA });
+      } catch { /* uma linha truncada por um desligamento não invalida as anteriores */ }
+    }
+    return rows;
   }
 
   /**
@@ -613,7 +679,7 @@ export class MunicipalService {
 
   /** Descarrega o que estiver pendente. O encerramento do processo não pode levar a varredura junto. */
   async encerrar() {
-    for (const job of this.jobs.values()) await this.talvezSalvar(job, true);
+    for (const job of this.jobs.values()) { await this.gravarInstante(job); await this.talvezSalvar(job, true); }
   }
 
   private rowCachePath(election: string, code: number, uf: string, cd: string) {
@@ -693,6 +759,7 @@ export class MunicipalService {
           if (job.fetches > 0 || job.abSeen.size > 0) job.confirmado = true;
           job.status = job.confirmado && job.rows.size >= job.muns.length ? 'ready' : 'loading';
           job.message = job.status === 'ready' ? 'Resultados por município recebidos do TSE.' : 'Recebendo os resultados por município.';
+          await this.gravarInstante(job);
           await this.talvezSalvar(job, job.status === 'ready');
           await this.pausa(delta === 'idle' ? 3000 : delta ? 500 : 5000);
           continue;
@@ -727,8 +794,8 @@ export class MunicipalService {
    * `pos` é a colocação da candidatura naquela cidade, que é o que a coluna da direita mostra; ela
    * sai da ordem publicada pelo TSE, não de conta nossa.
    */
-  async porCandidatura(mode: Mode, uf: string, turn: Turn, office: Office, numero: string): Promise<CandidaturaMunicipal> {
-    const bruto = await this.get(mode, uf, turn, office);
+  async porCandidatura(mode: Mode, uf: string, turn: Turn, office: Office, numero: string, at?: number): Promise<CandidaturaMunicipal> {
+    const bruto = await this.get(mode, uf, turn, office, undefined, at);
     if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado: 0, totais: { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0, desde: '', semTotais: 0 }, numero, linhas: [] };
 
     /*
@@ -763,7 +830,14 @@ export class MunicipalService {
      * publica em cada arquivo municipal, somados. É por isso que eles servem de conferência do
      * total da disputa, que vem por outro arquivo e outro caminho.
      */
-    const totais = this.somar(this.jobs.get(`${mode}:${turn}:${this.area(office, uf)}:${office}`));
+    /*
+     * A soma sai do mesmo retrato que gerou as linhas, não do job ao vivo.
+     *
+     * Reproduzindo o minuto zero, as linhas vinham vazias e a soma vinha de agora: a folha dizia
+     * "Somando 5.571 de 0 cidades publicadas · 100,00% apurado" com a tabela em branco embaixo.
+     * Dois instantes na mesma folha, e o número grande era o do instante errado.
+     */
+    const totais = bruto.totais;
     return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado, totais, numero, linhas };
   }
 
@@ -971,6 +1045,9 @@ export class MunicipalService {
     job.rows.set(cdi, nova);
     if (igual) return false;
     job.version++;
+    // A mudança entra na fila do gravador: é ela que permite remontar a tabela de qualquer
+    // instante depois, em vez de servir sempre o estado de agora.
+    job.mudadas.set(cdi, nova);
     return true;
   }
 

@@ -15,7 +15,7 @@ import { STATES, partyColor, type Office, type WireRace as Race, type Snapshot }
 import { ease, lerp, mapColors, mute, rgba } from './cores';
 import { achados, repartir } from './busca';
 import { escalaBase } from '../../shell/escala';
-import { MODE, TURN, UF, el, esc, fmtInt, fmtPercent, initials, loadSnapshot, onSnapshot, party, photoUrl, shortVotes, stateName, titleCase } from '../../shell/dados';
+import { MODE, TURN, UF, el, esc, fmtInt, fmtPercent, initials, loadSnapshot, onSnapshot, party, photoUrl, shortVotes, stateName, titleCase, porNoAr} from '../../shell/dados';
 import { mountPlayer } from '../../shell/player';
 import { HIT_CSS, hitInner, ROW_CSS, rowInner, seedScale } from '../../shell/row';
 import { mountShellBar, mountShellNote, pageReady } from '../../shell/shell';
@@ -757,11 +757,21 @@ async function main() {
   // the shell's playback bar, identical to the other views
   player = mountPlayer({
     render: async at => {
+      porNoAr(at);
       const next = await loadSnapshot(at);
       snap = next;
       raceIndex = new Map(); candCache = new Map(); paletteCache.clear();
       if (sel) sel = candAt(office, sel.idx);
       indexDirty = true; render(true);
+      /*
+       * O mapa também anda com o player.
+       *
+       * Antes só o painel de candidaturas seguia o instante: o mapa e a soma ficavam no agora, e a
+       * tela mostrava duas horas ao mesmo tempo. A versão guardada não serve de atalho aqui —
+       * instantes diferentes têm a mesma —, então a busca é sempre refeita.
+       */
+      const res = await fetchMunicipal(office.key);
+      if (res && !('unchanged' in res)) { apply(prepare(res as Payload), false); indexDirty = true; render(true); }
     },
   });
   // the bar reserves its height until the timeline answers: wait for its final size so the view

@@ -83,10 +83,12 @@ const municipalSchema = { type: 'object', properties: {
   office: { type: 'string', enum: ['president', 'governor', 'senate', 'federal', 'state'] },
   v: { type: 'integer', minimum: 0 },
   numero: { type: 'string', pattern: '^\\d{1,5}$' },
+  // `at` é o instante reproduzido: a tabela vem da gravação daquele momento, não do estado de agora.
+  at: { type: 'integer', minimum: 0 },
 }, required: ['office'], additionalProperties: false };
 /** Território: results per municipality for one UF + office, fetched on demand (see server/municipal.ts). */
-app.get<{ Querystring: { mode: Mode; uf: string; turn: Turn; office: Office; v?: number; numero?: string } }>('/api/municipal', { schema: { querystring: municipalSchema } }, async (request, reply) => {
-  const { mode, uf, turn, office, v, numero } = request.query;
+app.get<{ Querystring: { mode: Mode; uf: string; turn: Turn; office: Office; v?: number; numero?: string; at?: number } }>('/api/municipal', { schema: { querystring: municipalSchema } }, async (request, reply) => {
+  const { mode, uf, turn, office, v, numero, at } = request.query;
   /*
    * Com `numero`, só as cidades daquela candidatura — e só o que a folha desenha.
    *
@@ -96,9 +98,9 @@ app.get<{ Querystring: { mode: Mode; uf: string; turn: Turn; office: Office; v?:
    */
   if (numero) {
     reply.header('Cache-Control', 'no-store');
-    return municipal.porCandidatura(mode, uf, turn, office, numero);
+    return municipal.porCandidatura(mode, uf, turn, office, numero, at);
   }
-  const result = await municipal.get(mode, uf, turn, office, v);
+  const result = await municipal.get(mode, uf, turn, office, v, at);
   // A finished 2022 build never changes, so the browser may keep it and only ask whether it is
   // still the same: switching states reloads the page, and this turns the megabyte it used to
   // download again into a 304. Anything still loading, and every live source, stays uncached.

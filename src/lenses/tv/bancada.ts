@@ -131,32 +131,27 @@ export function abrirBancadas(o: BancadaOpcoes) {
     + `<div class="s">${esc(o.subtitulo)} · ${o.race.seats} vagas · ${bancadas.length} partidos</div></div>`
     + `<button aria-label="Fechar">✕</button></header>`
     + `<div class="rolo">`
-    + `<p class="preco">${qe > 0 && !semApuracao
-        ? `Cada cadeira custa <b>${fmtInt(qe)}</b> votos: é o quociente eleitoral, os ${fmtInt(o.race.validVotes)} votos válidos repartidos pelas ${o.race.seats} vagas.`
-        : 'O quociente eleitoral aparece quando os votos válidos começam a ser publicados.'}</p>`
     + (desenho
       ? `<div class="hemi">${desenho}</div>`
       : `<p class="vazio">${semApuracao ? 'A apuração desta disputa ainda não começou.' : 'Nenhuma cadeira definida ainda.'}</p>`)
+    /* Uma linha, não três. O til e a bolinha vazada já dizem "projeção"; repetir isso em prosa
+       comprida numa tela de apuração é ocupar o lugar das cadeiras, que são o assunto. */
     + `<p class="estado">${semApuracao
-        ? 'As cadeiras aparecem quando os primeiros votos válidos forem publicados pelo TSE.'
+        ? 'As cadeiras aparecem quando o TSE publicar os primeiros votos válidos.'
         : projetada
-        ? `<b>Projeção</b> sobre ${fmtPercent(o.race.countedPercent, 1)} apurado — é o que as bolinhas vazadas e o til querem dizer. O TSE ainda não elegeu ninguém nesta disputa.`
-        : `<b>Resultado publicado pelo TSE</b> — ${totalCadeiras} de ${o.race.seats} cadeiras definidas.`}</p>`
+        ? `<b>Projeção</b> sobre ${fmtPercent(o.race.countedPercent, 1)} apurado · o TSE ainda não elegeu ninguém`
+        : `<b>Publicado pelo TSE</b> · ${totalCadeiras} de ${o.race.seats} cadeiras definidas`}</p>`
     /*
-     * A regra em passos, com os números desta disputa.
+     * Os três números que explicam o desenho, e nada além.
      *
-     * Antes eram dois parágrafos corridos com quatro regras dentro, e ninguém lê isso numa tela de
-     * apuração. Cada passo é uma pergunta que a pessoa faz olhando a folha, na ordem em que ela faz.
+     * Aqui havia quatro parágrafos com a lei inteira dentro. Ninguém lê isso numa tela de
+     * apuração, e eles ocupavam mais espaço que as cadeiras — que são o assunto. Sobram os três
+     * limiares que fazem a conta, cada um com uma linha do que é.
      */
     + (semApuracao ? '' : `<dl class="regra">`
-      + `<dt>O preço de uma cadeira</dt>`
-      + `<dd>O <b>quociente eleitoral</b>: ${fmtInt(o.race.validVotes)} votos válidos repartidos pelas ${o.race.seats} vagas, ${fmtInt(qe)} votos cada.</dd>`
-      + `<dt>Quantas cadeiras cada partido faz</dt>`
-      + `<dd>Quantas vezes o total do partido couber no quociente. As vagas que sobram vão por <b>maiores médias</b>, e disputa essas sobras quem tem ao menos 80% do quociente — ${fmtInt(Math.round(qe * 0.8))} votos. É por isso que um partido abaixo do quociente ainda pode eleger.</dd>`
-      + `<dt>Quem ocupa cada cadeira</dt>`
-      + `<dd>Dentro do partido, as candidaturas mais votadas que tenham ao menos <b>10% do quociente</b> — ${fmtInt(Math.round(qe * 0.1))} votos. Vaga sem ninguém nesse piso fica sem nome: ela volta para a redistribuição.</dd>`
-      + `<dt>O que entra em "votos nominais"</dt>`
-      + `<dd>A soma das candidaturas do partido. O <b>voto de legenda</b>, dado ao número do partido, não entra nesta conta.</dd>`
+      + `<div><dt>Quociente</dt><dd>${fmtInt(qe)}</dd><span>votos por cadeira</span></div>`
+      + `<div><dt>Disputa as sobras</dt><dd>${fmtInt(Math.round(qe * 0.8))}</dd><span>80% do quociente</span></div>`
+      + `<div><dt>Piso para ter nome</dt><dd>${fmtInt(Math.round(qe * 0.1))}</dd><span>10% do quociente</span></div>`
       + `</dl>`)
     + `</div>`
     + `<div class="pe">A ordem de votação não define as vagas proporcionais; quem senta é quem o TSE elege.</div>`
@@ -234,16 +229,15 @@ const CSS = `
 
 /* A regra em passos: o termo de um lado, a frase do outro. Dois paragrafos corridos com quatro
    regras dentro ninguem le numa tela de apuracao. */
-.bnc dl.regra { display: grid; grid-template-columns: minmax(9vw, 15vw) 1fr;
-  gap: .9vh 1.4vw; margin: 0; padding: 1.4vh 2.2vw 2.4vh; }
-.bnc dl.regra dt { font-size: clamp(9px, .72vw, 14px); color: #8b8981; text-align: right;
-  line-height: 1.45; }
-.bnc dl.regra dd { margin: 0; font-size: clamp(10px, .78vw, 15px); color: #6a6863; line-height: 1.5; }
-.bnc dl.regra dd b { color: #b9b6ae; font-weight: 600; }
+.bnc dl.regra { display: flex; flex-wrap: wrap; gap: 1.4vh 5vw; margin: 0; padding: .6vh 2.2vw 2.4vh; }
+.bnc dl.regra > div { display: flex; flex-direction: column; gap: .2vh; }
+.bnc dl.regra dt { font-size: clamp(10px, .76vw, 15px); color: #8b8981; }
+.bnc dl.regra dd { margin: 0; font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+  font-size: clamp(20px, 1.7vw, 34px); color: #e8e4dc; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.bnc dl.regra span { font-size: clamp(9px, .68vw, 13px); color: #6a6863; }
 
 @media (max-width: 720px) {
-  .bnc dl.regra { grid-template-columns: 1fr; gap: .3vh 0; }
-  .bnc dl.regra dt { text-align: left; color: #b9b6ae; margin-top: 1.4vh; }
+  .bnc dl.regra { gap: 1.2vh 2.4vw; }
 }
 .bnc .vazio { margin: 0; padding: 4vh 2.2vw 0; text-align: center; color: #6a6863;
   font-size: clamp(11px, .85vw, 16px); }

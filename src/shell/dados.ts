@@ -109,6 +109,26 @@ export function onSnapshot(fn: (s: Snapshot) => void): () => void {
   };
 }
 
+/*
+ * Que instante está no ar — e é uma pergunta só, para toda a tela.
+ *
+ * A reprodução acertava o painel e deixava o resto no agora: o rodapé anunciava quem tinha sido
+ * eleito enquanto o painel mostrava 0,0% apurado, e a folha de cidades abria com 526.640 de
+ * 526.640 seções, 100,00%, com a apuração reproduzida no minuto zero.
+ *
+ * O resultado por município não é gravado instante a instante — o TSE serve o estado de agora, e
+ * só. Então quem lê `/api/municipal` precisa saber que não está no ao vivo, para dizer isso em vez
+ * de mostrar o número de outra hora. Uma variável de módulo é o que faz as três telas concordarem
+ * sem passar o instante por dez assinaturas.
+ */
+let instante: number | null = null;
+/** O instante reproduzido, ou nulo no ao vivo. */
+export const momentoNoAr = (): number | null => instante;
+/** O transporte de cada tela anuncia aqui o instante que pôs no ar. */
+export const porNoAr = (at?: number) => { instante = at ?? null; };
+/** Frase única para o que não existe fora do ao vivo. */
+export const SEM_REPRODUCAO = 'O resultado por município não é gravado instante a instante: o TSE publica só o estado de agora. Volte ao ao vivo para ver as cidades.';
+
 export async function loadSnapshot(at?: number): Promise<Snapshot> {
   // a snapshot the stream delivered a moment ago is the same one the endpoint would return
   if (at === undefined && pushed && Date.now() - pushed.at < 2000) return pushed.snapshot;

@@ -10,7 +10,7 @@
  */
 import { expandirCandidatura, type CandidaturaCompacta, type Office, type Snapshot, type WireRace as Race } from '../../../shared/types';
 import type { RankedCandidate } from '../../domain/derive';
-import { MODE, TURN, UF, all, contestedSeats, el, esc, fmtInt, fmtPercent, fold, initials, party, photoUrl, seatsByParty, stateName, titleCase } from '../../shell/dados';
+import { MODE, TURN, UF, all, contestedSeats, el, esc, fmtInt, fmtPercent, fold, initials, party, photoUrl, seatsByParty, stateName, titleCase, momentoNoAr} from '../../shell/dados';
 import { colorOf } from './cores';
 
 const YEAR = MODE === 'historico' ? 2022 : 2026;
@@ -46,7 +46,9 @@ export function abrirCandidato(snap: Snapshot, office: Office, c: RankedCandidat
   const load = async () => {
     if (closed) return;
     let p: { status: string; message: string; loaded: number; total: number; c: [string, number][]; m: [string, string, string, number, number[]][] } | null = null;
-    try { const r = await fetch(`/api/municipal?mode=${MODE}&uf=${UF}&turn=${TURN}&office=${office}`, { cache: 'no-store' }); p = r.ok ? await r.json() : null; } catch { p = null; }
+    // O instante reproduzido vai junto: a gravação por cidade devolve a tabela daquele momento.
+    const at = momentoNoAr();
+    try { const r = await fetch(`/api/municipal?mode=${MODE}&uf=${UF}&turn=${TURN}&office=${office}${at == null ? '' : `&at=${Math.round(at)}`}`, { cache: 'no-store' }); p = r.ok ? await r.json() : null; } catch { p = null; }
     if (closed) return;
     if (!p) { status.textContent = 'Não foi possível carregar os municípios agora. Tentando de novo…'; timer = window.setTimeout(load, 3000); return; }
     const idx = (p.c || []).findIndex(x => x[0] === c.number);
@@ -61,7 +63,7 @@ export function abrirCandidato(snap: Snapshot, office: Office, c: RankedCandidat
     const ready = p.status === 'ready';
     status.textContent = ready ? '' : p.total ? `Carregando municípios · ${fmtInt(p.loaded)} de ${fmtInt(p.total)}` : (p.message || 'Carregando municípios…');
     draw();
-    if (!ready) timer = window.setTimeout(load, 2500);
+    if (!ready && at == null) timer = window.setTimeout(load, 2500);
   };
   input.addEventListener('input', () => { shownN = 200; draw(); });
   sheet.querySelector('.scroll')!.addEventListener('scroll', e => { const t = e.target as HTMLElement; if (t.scrollTop + t.clientHeight > t.scrollHeight - 300 && more.textContent) { shownN += 200; draw(); } });

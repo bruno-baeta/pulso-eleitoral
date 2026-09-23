@@ -397,3 +397,64 @@ test('cidade encerrada lida por um parser mais velho é rebuscada', async () => 
     } finally { transporte.close(); }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test('a tabela de um instante passado vem da gravação, não do estado de agora', async () => {
+  /*
+   * O pedido, e o defeito que ele conserta: abrir um candidato no minuto zero da reprodução
+   * devolvia "526.640 de 526.640 seções · 100,00% apurado pelas cidades" ao lado de um painel em
+   * 0,0%. O resultado por município só existia como retrato de agora.
+   *
+   * Agora cada mudança de cidade vai para o disco com a hora, e a tabela de um instante é a soma
+   * das linhas até ele.
+   */
+  const dir = await mkdtemp(join(tmpdir(), 'pulso-mun-'));
+  const tse = tseComTotais(4);
+  // Relógio próprio: o transporte não repede a mesma URL dentro do intervalo dela, e o teste
+  // inteiro roda em menos tempo que esse intervalo. Sem adiantar o relógio, nada é rebuscado.
+  const relogio = relogioFalso();
+  const transporte = new TseTransport(500, tse.fetch, relogio.agora);
+  try {
+    const s = new MunicipalService(transporte, hooks(), dir, 0.01);
+    const cedo = totaisDe(await ateFechar(s, 'simulado', 'MG', 1, 'governor'));
+    assert.equal(cedo?.nominais, 4 * 150, 'a primeira leitura tem 150 votos por cidade');
+
+    const instante = Date.now();
+    await respirar(4);
+    relogio.avancar(60_000);
+
+    // A fonte anda: votos novos e carimbo novo, senão nada é rebuscado.
+    tse.em(`-e0${ELEICAO}-ab.json`, { corpo: andamento(ELEICAO, 'mg', 4, { hora: '12:00:00' }) });
+    tse.em(`-c0003-e0${ELEICAO}-u.json`, url => {
+      const cd = /mg(\d+)-c/.exec(url)?.[1] ?? '0';
+      return { corpo: resultadoMunicipal(ELEICAO, cd, 3, [['83', 900], ['89', 100]], { vb: 7, vn: 3, st: 20, ts: 20 }) };
+    });
+    for (let i = 0; i < 80; i++) {
+      await respirar(6);
+      relogio.avancar(10_000);
+      const t = totaisDe(await s.get('simulado', 'MG', 1, 'governor'));
+      if (t?.nominais === 4 * 1000) break;
+    }
+    await s.encerrar();
+
+    const agora = totaisDe(await s.get('simulado', 'MG', 1, 'governor'));
+    assert.equal(agora?.nominais, 4 * 1000, 'o ao vivo mostra os votos novos');
+
+    const passado = totaisDe(await s.get('simulado', 'MG', 1, 'governor', undefined, instante));
+    assert.equal(passado?.nominais, 4 * 150, 'e o instante gravado mostra os de antes');
+    assert.equal(passado?.cidades, 4, 'com as quatro cidades que já existiam ali');
+  } finally { transporte.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('um instante anterior a qualquer gravação devolve tabela vazia, não a de agora', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'pulso-mun-'));
+  const transporte = new TseTransport(500, tseComTotais(4).fetch);
+  try {
+    const s = new MunicipalService(transporte, hooks(), dir, 0.01);
+    await ateFechar(s, 'simulado', 'MG', 1, 'governor');
+    await s.encerrar();
+    // Antes de tudo: nenhuma cidade tinha publicado, e é isso que a tela tem de mostrar.
+    const vazio = totaisDe(await s.get('simulado', 'MG', 1, 'governor', undefined, 1));
+    assert.equal(vazio?.cidades, 0);
+    assert.equal(vazio?.nominais, 0);
+  } finally { transporte.close(); await rm(dir, { recursive: true, force: true }); }
+});

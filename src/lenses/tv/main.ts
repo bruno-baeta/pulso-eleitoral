@@ -19,7 +19,7 @@ import '@fontsource-variable/dm-sans/wght.css';
 import '@fontsource/barlow-condensed/600.css';
 import '@fontsource/barlow-condensed/700.css';
 import { expandirCandidatura, type Candidate, type CandidaturaCompacta, type Office, type WireRace as Race, type Snapshot } from '../../../shared/types';
-import { MODE, TURN, UF, esc, fmtInt, fmtPercent, loadSnapshot, onSnapshot, stateName } from '../../shell/dados';
+import { MODE, TURN, UF, esc, fmtInt, fmtPercent, loadSnapshot, onSnapshot, stateName, porNoAr} from '../../shell/dados';
 import { mountShellBar, pageReady } from '../../shell/shell';
 import { seedScale } from '../../shell/row';
 import { publishedStatus } from '../../domain/derive';
@@ -662,6 +662,7 @@ async function main() {
       numero: c.number ?? '',
       cor: c.color || '#8a94a6',
       mode: MODE, uf: UF, turn: TURN, office,
+      momento: () => momento,
     });
   };
 
@@ -728,6 +729,7 @@ async function main() {
     elemento: palco.querySelector<HTMLElement>('.fita')!,
     mostrar: async at => {
       momento = at ?? null;
+      porNoAr(at);
       snap = await loadSnapshot(at);
       await lerPresidenciaNoEstado();
       desenhar();

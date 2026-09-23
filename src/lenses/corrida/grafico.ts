@@ -21,7 +21,7 @@ import { abrirCandidato, abrirTabela } from './fichas';
 import { escalaY } from './escala';
 import { escalaConteudo, estreita } from '../../shell/escala';
 import { mountShellBar, mountShellNote, pageReady } from '../../shell/shell';
-import { all, contestedSeats, el, esc, fmtInt, fmtPercent, fmtShortTime, fold, initials, loadSnapshot, loadTimeline, MODE, party, photoUrl, seatsByParty, shortVotes, stateName, titleCase, TURN, UF, YEAR } from '../../shell/dados';
+import { all, contestedSeats, el, esc, fmtInt, fmtPercent, fmtShortTime, fold, initials, loadSnapshot, loadTimeline, MODE, party, photoUrl, seatsByParty, shortVotes, stateName, titleCase, TURN, UF, YEAR, porNoAr} from '../../shell/dados';
 
 const style = document.createElement('style'); style.textContent = HIT_CSS + CSS; document.head.appendChild(style);
 seedScale();
@@ -800,7 +800,7 @@ async function main() {
   // clock and asks for the snapshot of whichever instant it lands on.
   const player = mountPlayer({
     state: rp,
-    render: async at => { snap = await loadSnapshot(at); layout(); },
+    render: async at => { porNoAr(at); snap = await loadSnapshot(at); layout(); },
     reset: () => { lastVotes.clear(); lastLeader.clear(); },
     isPhone: () => app.classList.contains('mobile'),
     // Live and demo refresh every 3 s; the final 2022 archive only until its files have arrived.

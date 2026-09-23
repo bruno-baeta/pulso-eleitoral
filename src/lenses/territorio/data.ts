@@ -4,7 +4,7 @@
  */
 import type { Office } from '../../../shared/types';
 import { fold as foldBase } from '../../domain/format';
-import { MODE, TURN, UF, titleCase } from '../../shell/dados';
+import { MODE, TURN, UF, momentoNoAr, titleCase } from '../../shell/dados';
 
 export type Status = 'ready' | 'loading' | 'waiting' | 'paused' | 'unavailable';
 export interface Payload {
@@ -45,7 +45,16 @@ export async function fetchMunicipal(office: Office, since?: number): Promise<Pa
   try {
     // 2022 is closed: the browser keeps it and asks only whether it changed (304), which is what
     // makes coming back to a state cheap — switching states reloads the page. Live sources move.
-    const r = await fetch(`/api/municipal?mode=${MODE}&uf=${UF}&turn=${TURN}&office=${office}${since === undefined ? '' : `&v=${since}`}`, { cache: MODE === 'historico' ? 'no-cache' : 'no-store' });
+    /*
+     * Reproduzindo, o mapa vem da gravação daquele instante.
+     *
+     * O servidor guarda as mudanças por cidade com a hora, então o mapa acompanha o player em vez
+     * de ficar parado no agora enquanto o painel de candidaturas anda. `v` é o atalho de versão do
+     * ao vivo e não vale para um instante passado: dois instantes têm a mesma versão.
+     */
+    const at = momentoNoAr();
+    const chave = at != null ? `&at=${Math.round(at)}` : since === undefined ? '' : `&v=${since}`;
+    const r = await fetch(`/api/municipal?mode=${MODE}&uf=${UF}&turn=${TURN}&office=${office}${chave}`, { cache: MODE === 'historico' ? 'no-cache' : 'no-store' });
     return r.ok ? await r.json() : null;
   } catch { return null; }
 }
