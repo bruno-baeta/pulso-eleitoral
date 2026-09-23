@@ -40,6 +40,16 @@ export class TseTransport {
   readonly entries = new Map<string, CacheEntry>();
   requests = 0;
   notModified = 0;
+  /*
+   * O pico observado, em requisições por segundo.
+   *
+   * O teto do TSE é por IP, e quem o estoura é bloqueado no meio da apuração — sem aviso e sem
+   * como saber, depois, se a culpa foi nossa. O balde de fichas garante que não passamos de
+   * `maxRps`, mas garantia de código é uma promessa; isto é a medição. O contador anda numa
+   * janela de um segundo e guarda o maior valor da execução.
+   */
+  pico = 0;
+  private janela = { desde: 0, n: 0 };
   lastCheckAt: number | null = null;
   lastSuccessAt: number | null = null;
   rttMs: number | null = null;
@@ -116,6 +126,10 @@ export class TseTransport {
     const retain = options.retain !== false;
     const started = performance.now();
     this.requests++;
+    const agora = Date.now();
+    if (agora - this.janela.desde >= 1000) this.janela = { desde: agora, n: 0 };
+    this.janela.n++;
+    if (this.janela.n > this.pico) this.pico = this.janela.n;
     this.lastCheckAt = this.clock();
     try {
       const headers: Record<string, string> = { Accept: 'application/json', 'User-Agent': 'PulsoEleitoral/1.0 (+https://github.com/bruno-baeta/pulso-eleitoral; consumo condicional)' };

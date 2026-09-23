@@ -47,6 +47,29 @@ app.addHook('onSend', async (_request, reply) => {
 registrarCompressao(app);
 
 app.get('/api/health', async () => ({ ok: true, service: 'pulso-eleitoral', time: new Date().toISOString() }));
+
+/**
+ * Como está o nosso consumo do TSE.
+ *
+ * O limite deles é por IP e o bloqueio é silencioso: a tela simplesmente para de encher. Esta rota
+ * responde, com número, se a culpa é nossa — o pico de requisições por segundo desde que o
+ * processo subiu, contra o teto configurado — ou se é o TSE recusando, pelo horário da pausa e
+ * pela última resposta que chegou.
+ */
+app.get('/api/diagnostico', async reply => {
+  void reply;
+  const t = collector.transport;
+  return {
+    teto: t.maxRps,
+    pico: t.pico,
+    requisicoes: t.requests,
+    naoModificados: t.notModified,
+    ultimaConsulta: t.lastCheckAt && new Date(t.lastCheckAt).toISOString(),
+    ultimaResposta: t.lastSuccessAt && new Date(t.lastSuccessAt).toISOString(),
+    rttMs: t.rttMs,
+    pausadoAte: t.cooldownUntil > Date.now() ? new Date(t.cooldownUntil).toISOString() : null,
+  };
+});
 app.get<{ Querystring: Query }>('/api/snapshot', { schema: { querystring: querySchema } }, async (request, reply) => {
   reply.header('Cache-Control', 'no-store');
   const { mode, uf, turn, at } = request.query;

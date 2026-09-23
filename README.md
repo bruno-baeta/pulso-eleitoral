@@ -105,6 +105,10 @@ Ele reproduz a apuração gravada no disco, minuto a minuto.
 
   A fila municipal só usa a folga deixada pelas disputas, e um 404 dela — município que ainda não
   publicou — não pausa a coleta. Rodar duas instâncias atrás do mesmo IP dobra a conta.
+
+- `GET /api/diagnostico` responde, com número, qual foi o **pico de requisições por segundo** desde
+  que o processo subiu, o teto configurado e se o TSE pausou as consultas. É por onde se descobre,
+  numa noite de apuração, se a tela parou de encher por culpa nossa ou deles.
 - Fora das janelas, o simulado não é consultado: a tela abre a última sessão gravada, em replay.
 
 Configuração opcional em `.env` — veja `.env.example`.
