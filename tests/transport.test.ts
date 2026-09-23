@@ -57,13 +57,43 @@ test('a transient failure preserves the cache and backs off', async t => {
   assert.equal(await client.get('https://test.test/a', 2000), null); assert.equal(calls, 2);
 });
 
-test('the shared queue spaces request starts and has bounded concurrency', async t => {
-  const starts: number[] = [];
-  const client = new TseTransport(10, (async () => { starts.push(performance.now()); return new Response('{}'); }) as typeof fetch);
+test('a fila compartilhada respeita o teto de requisições por segundo', async t => {
+  /*
+   * Mede o tempo total das cinco, não o intervalo entre cada par.
+   *
+   * A versão anterior exigia pelo menos 80 ms entre duas partidas consecutivas, contra um alvo de
+   * 100 — vinte por cento de folga contra qualquer pausa do coletor de lixo ou da máquina ocupada.
+   * É o mesmo desenho que fez o teste do cache de compressão piscar duas vezes em 23/09/2026. O
+   * total só pode crescer com uma pausa, nunca encolher, então a asserção não tem como falhar por
+   * carga: se ela falhar, o balde de fichas deixou mesmo de segurar.
+   */
+  const client = new TseTransport(10, (async () => new Response('{}')) as typeof fetch);
   t.after(() => client.close());
+  const inicio = performance.now();
   await Promise.all(Array.from({ length: 5 }, (_, i) => client.get(`https://test.test/${i}`, 2000)));
-  assert.equal(starts.length, 5);
-  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 80, 'request starts must respect the shared rate cap');
+  const total = performance.now() - inicio;
+
+  const minimo = 4 * (1000 / 10) * 0.8;          // quatro intervalos de 100 ms, com folga
+  assert.ok(total >= minimo, `cinco requisições a 10/s não podem sair em ${total.toFixed(0)} ms`);
+  assert.equal(client.requests, 5);
+});
+
+test('nunca há mais requisições em voo do que o teto de simultâneas', async t => {
+  /*
+   * Esta é a metade determinística do teste antigo: contar quantas estão em voo não depende de
+   * relógio nenhum.
+   */
+  let emVoo = 0, pico = 0;
+  const client = new TseTransport(500, (async () => {
+    emVoo++; pico = Math.max(pico, emVoo);
+    await new Promise(r => setTimeout(r, 5));
+    emVoo--;
+    return new Response('{}');
+  }) as typeof fetch, Date.now, 60, 4);
+  t.after(() => client.close());
+  await Promise.all(Array.from({ length: 30 }, (_, i) => client.get(`https://test.test/voo/${i}`, 2000)));
+  assert.ok(pico <= 4, `o teto de simultâneas é 4 e o pico foi ${pico}`);
+  assert.equal(client.requests, 30, 'e todas saíram');
 });
 
 test('o teto do TSE é cem por segundo, e nenhuma configuração passa disso', async t => {

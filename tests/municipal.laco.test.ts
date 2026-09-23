@@ -51,7 +51,7 @@ function tseComMinas(quantos: number, opcoes: { encerradas?: boolean; cargos?: n
 async function servico(tse: TseFalso, extra: Partial<MunicipalHooks> = {}, relogio?: () => number) {
   const dir = await mkdtemp(join(tmpdir(), 'pulso-mun-'));
   const transporte = new TseTransport(500, tse.fetch, relogio);
-  const servico = new MunicipalService(transporte, hooks(extra), dir);
+  const servico = new MunicipalService(transporte, hooks(extra), dir, 0.01);
   return { servico, transporte, dir, fechar: async () => { transporte.close(); await rm(dir, { recursive: true, force: true }); } };
 }
 
@@ -123,7 +123,7 @@ test('estado que responde 304 no andamento continua sendo varrido', async () => 
     const primeiras = tse.contar('-ab.json');
 
     relogio.avancar(30_000);                       // passa do intervalo do andamento
-    await manterAberto(s, 'simulado', 'MG', 1, 'governor', 4500);
+    await manterAberto(s, 'simulado', 'MG', 1, 'governor', 400);
 
     assert.ok(tse.contar('-ab.json') > primeiras, 'o andamento foi relido depois do intervalo');
     const payload = await s.get('simulado', 'MG', 1, 'governor');
@@ -145,7 +145,7 @@ test('cidade encerrada pelo TSE não é pedida de novo', async () => {
     // Só as cidades deste cargo: o transporte inteiro inclui os cargos irmãos sendo aquecidos.
     const depoisDeEncher = tse.contar('-c0003-e0');
 
-    await manterAberto(s, 'simulado', 'MG', 1, 'governor', 4500);
+    await manterAberto(s, 'simulado', 'MG', 1, 'governor', 400);
     const repedidas = tse.contar('-c0003-e0') - depoisDeEncher;
     assert.equal(repedidas, 0, `com tudo encerrado não se repede cidade; foram ${repedidas}`);
   } finally { await fechar(); }
@@ -228,7 +228,7 @@ test('o que foi varrido sobrevive a um processo novo', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pulso-mun-'));
   const primeiro = new TseTransport(500, tse.fetch);
   try {
-    const antes = new MunicipalService(primeiro, hooks(), dir);
+    const antes = new MunicipalService(primeiro, hooks(), dir, 0.01);
     const cheio = await ateFechar(antes, 'simulado', 'MG', 1, 'governor');
     assert.equal(cidades(cheio), 11);
     await antes.encerrar();
@@ -238,7 +238,7 @@ test('o que foi varrido sobrevive a um processo novo', async () => {
   const mudo = new TseFalso();
   const segundo = new TseTransport(500, mudo.fetch);
   try {
-    const depois = new MunicipalService(segundo, hooks({ allowed: () => false }), dir);
+    const depois = new MunicipalService(segundo, hooks({ allowed: () => false }), dir, 0.01);
     const relido = await depois.get('simulado', 'MG', 1, 'governor');
     assert.equal(cidades(relido), 11, 'as cidades voltaram do disco');
     assert.equal(mudo.pedidos.size, 0, 'e voltaram sem pedir nada ao TSE');
@@ -250,7 +250,7 @@ test('a gravação de uma sessão do simulado não ressuscita na sessão seguint
   const dir = await mkdtemp(join(tmpdir(), 'pulso-mun-'));
   const t1 = new TseTransport(500, tse.fetch);
   try {
-    const antes = new MunicipalService(t1, hooks({ session: () => '2026-09-23-09h' }), dir);
+    const antes = new MunicipalService(t1, hooks({ session: () => '2026-09-23-09h' }), dir, 0.01);
     assert.equal(cidades(await ateFechar(antes, 'simulado', 'MG', 1, 'governor')), 7);
     await antes.encerrar();
   } finally { t1.close(); }
@@ -258,7 +258,7 @@ test('a gravação de uma sessão do simulado não ressuscita na sessão seguint
   const mudo = new TseFalso();
   const t2 = new TseTransport(500, mudo.fetch);
   try {
-    const outra = new MunicipalService(t2, hooks({ session: () => '2026-09-23-14h', allowed: () => false }), dir);
+    const outra = new MunicipalService(t2, hooks({ session: () => '2026-09-23-14h', allowed: () => false }), dir, 0.01);
     const relido = await outra.get('simulado', 'MG', 1, 'governor');
     assert.equal(cidades(relido), 0, 'a sessão da tarde não herda os números da manhã');
   } finally { t2.close(); await rm(dir, { recursive: true, force: true }); }

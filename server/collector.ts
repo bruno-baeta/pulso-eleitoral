@@ -196,15 +196,31 @@ export class Collector {
    * from the TSE simply replaces it.
    */
   private async restoreFromRecording(now = Date.now()) {
-    const session = this.session('simulado', now);
-    if (session === 'fora-da-janela') return;
-    for (const uf of this.recordUfs) {
-      for (const office of Object.keys(OFFICES) as Office[]) {
-        const area = office === 'president' ? 'BR' : uf;
-        const chave = `simulado:1:${area}:${office}`;
-        if (this.races.has(chave)) continue;
-        const race = await this.recorder.raceAt(Recorder.key('simulado', session, 1, area, office), now);
-        if (race) { this.races.set(chave, race); this.dirty = true; }
+    /*
+     * A noite oficial também tem gravação, e ela também precisa voltar.
+     *
+     * Isto tinha `'simulado'` e o turno `1` escritos na mão. A gravação de 4 e de 25 de outubro
+     * existe em `data/recordings/official/`, e era o único lugar onde o dado ficava se o
+     * `state.json` se perdesse ou fosse invalidado por um bump de `STATE_VERSION` — e ela nunca era
+     * relida. O caso em que isso importa é exatamente o pior: um restart no meio da apuração real.
+     */
+    for (const mode of ['simulado', 'official'] as const) {
+      if (!this.allowed(mode, now)) continue;
+      const session = this.session(mode, now);
+      if (session === 'fora-da-janela') continue;
+      const aberta = openWindow(mode === 'simulado' ? SIMULADO_WINDOWS : OFFICIAL_WINDOWS, now);
+      const turn = aberta?.turn ?? 1;
+      for (const uf of this.recordUfs) {
+        for (const office of Object.keys(OFFICES) as Office[]) {
+          // No segundo turno só existem presidente e governador; pedir o resto é procurar arquivo
+          // que nunca foi gravado.
+          if (turn === 2 && !['president', 'governor'].includes(office)) continue;
+          const area = office === 'president' ? 'BR' : uf;
+          const chave = `${mode}:${turn}:${area}:${office}`;
+          if (this.races.has(chave)) continue;
+          const race = await this.recorder.raceAt(Recorder.key(mode, session, turn, area, office), now);
+          if (race) { this.races.set(chave, race); this.dirty = true; }
+        }
       }
     }
   }

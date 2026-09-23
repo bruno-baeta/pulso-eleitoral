@@ -171,7 +171,17 @@ export class MunicipalService {
   private configs = new Map<string, MunRef[]>();
   private rawConfigs = new Map<string, unknown>();
 
-  constructor(private transport: TseTransport, private hooks: MunicipalHooks, private dataDir = './data') {}
+  /**
+   * `escala` encolhe as esperas internas do laço, e existe para os testes.
+   *
+   * O laço dorme segundos entre voltas — três quando não há nada sujo, cinco quando o andamento não
+   * respondeu. É o ritmo certo contra o TSE e o ritmo errado numa suíte: os dez testes do laço
+   * levavam 133 segundos esperando sono de produção. Com 0,01 eles levam o que devem levar, e o
+   * comportamento testado é o mesmo — o que muda é só quanto tempo o relógio anda entre as voltas.
+   */
+  constructor(private transport: TseTransport, private hooks: MunicipalHooks, private dataDir = './data', private escala = 1) {}
+
+  private pausa(ms: number) { return sleep(Math.max(1, Math.round(ms * this.escala))); }
 
   private area(office: Office, uf: string) { return office === 'president' ? 'BR' : uf; }
 
@@ -471,14 +481,14 @@ export class MunicipalService {
       while (Date.now() - job.lastRequest < KEEPALIVE) {
         if (this.transport.cooldownUntil > Date.now()) {
           job.status = 'paused'; job.message = 'Consultas ao TSE pausadas após resposta do servidor. Retomada automática.';
-          await sleep(Math.min(60_000, this.transport.cooldownUntil - Date.now())); continue;
+          await this.pausa(Math.min(60_000, this.transport.cooldownUntil - Date.now())); continue;
         }
         if (job.mode === 'simulado' && !this.hooks.allowed('simulado')) {
           job.status = job.rows.size ? 'ready' : 'waiting'; job.message = 'Fora da janela de testes do TSE: municípios não são consultados agora.';
-          await sleep(30_000); continue;
+          await this.pausa(30_000); continue;
         }
         const target = this.target(job);
-        if (!target) { job.status = job.rows.size ? job.status : 'waiting'; job.message = 'Aguardando a configuração da eleição ser publicada pelo TSE.'; await sleep(10_000); continue; }
+        if (!target) { job.status = job.rows.size ? job.status : 'waiting'; job.message = 'Aguardando a configuração da eleição ser publicada pelo TSE.'; await this.pausa(10_000); continue; }
         const muns = await this.config(target.configUrl, job.area, job.mode === 'historico' ? ARCHIVE_TTL : 10 * 60_000);
         if (!muns) {
           /*
@@ -493,10 +503,10 @@ export class MunicipalService {
           if (lida && !job.muns.length) {
             job.status = 'unavailable';
             job.message = `O TSE não publica resultado por município ${job.area === 'BR' ? 'nesta fonte' : `de ${job.area} nesta fonte`}.`;
-            await sleep(60_000);
+            await this.pausa(60_000);
           } else {
             if (!job.muns.length) job.message = 'Buscando a lista de municípios no TSE.';
-            await sleep(5000);
+            await this.pausa(5000);
           }
           continue;
         }
@@ -511,7 +521,7 @@ export class MunicipalService {
         }
         if (job.status === 'loading' && !job.rows.size) job.message = 'Buscando os resultados por município no TSE.';
         // A faixa municipal é uma só: quem não é a varredura da vez espera (ver `vezDeVarrer`).
-        if (!this.vezDeVarrer(job)) { await sleep(2000); continue; }
+        if (!this.vezDeVarrer(job)) { await this.pausa(2000); continue; }
         if (job.mode !== 'historico') {
           // Live: read the UF progress file and fetch only the cities whose stamp changed; rotation only as a fallback.
           if (job.rows.size < job.muns.length) { job.status = 'loading'; job.message = 'Recebendo os resultados por município.'; }
@@ -520,7 +530,7 @@ export class MunicipalService {
           job.status = job.rows.size >= job.muns.length ? 'ready' : 'loading';
           job.message = job.status === 'ready' ? 'Resultados por município recebidos do TSE.' : 'Recebendo os resultados por município.';
           await this.talvezSalvar(job, job.status === 'ready');
-          await sleep(delta === 'idle' ? 3000 : delta ? 500 : 5000);
+          await this.pausa(delta === 'idle' ? 3000 : delta ? 500 : 5000);
           continue;
         }
         const done = await this.pass(job, target);
@@ -531,7 +541,7 @@ export class MunicipalService {
             break;
           }
           job.status = 'loading'; job.message = 'Buscando os resultados por município no TSE.';
-          if (!done) await sleep(3000);
+          if (!done) await this.pausa(3000);
         }
       }
     } catch (e) {
