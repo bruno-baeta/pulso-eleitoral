@@ -91,14 +91,28 @@ export class TseTransport {
       const now = Date.now();
       this.tokens = Math.min(Math.max(1, maxRps / 10), this.tokens + (now - this.lastFill) * maxRps / 1000);
       this.lastFill = now;
+      /*
+       * A faixa baixa tem vez própria, não as sobras da normal.
+       *
+       * A regra anterior só a servia quando `this.queue` estava vazia. Isso funcionava enquanto o
+       * Pulso gravava um estado; com os 27 a fila normal nunca mais esvaziou, e a faixa baixa
+       * parou de andar por completo. Medido em 23/09/2026, durante a janela: active=2 de 48,
+       * fila=33, filaBaixa=454 — quatrocentos e cinquenta e quatro arquivos municipais parados com
+       * o transporte praticamente ocioso. A tela de cidades abria vazia por causa disto, e não por
+       * falta de dado no TSE.
+       *
+       * Agora ela toma um lugar sempre que o próprio ritmo dela permite (`lowRps`), e a normal fica
+       * com todo o resto. Como `lowRps` é menor que `maxRps`, sobra faixa de sobra para as corridas
+       * — que são o que não pode atrasar — e o balde de fichas continua sendo o único teto.
+       */
       while (this.tokens >= 1) {
-        if (this.active < this.maxInFlight && this.queue.length) this.queue.shift()!();
-        // The low lane only takes a slot the normal queue left empty and always leaves two in-flight
-        // slots free for race files; it also keeps its own, slower pace.
-        else if (this.active < this.maxInFlight - 2 && this.lowQueue.length && now - this.lastLowAt >= 1000 / Math.max(.1, Math.min(lowRps, maxRps))) {
+        const vezDaBaixa = this.active < this.maxInFlight - 2 && this.lowQueue.length
+          && now - this.lastLowAt >= 1000 / Math.max(.1, Math.min(lowRps, maxRps));
+        if (vezDaBaixa) {
           this.lastLowAt = now;
           this.lowQueue.shift()!();
-        } else break;
+        } else if (this.active < this.maxInFlight && this.queue.length) this.queue.shift()!();
+        else break;
         this.tokens--;
       }
     }, TICK_MS);

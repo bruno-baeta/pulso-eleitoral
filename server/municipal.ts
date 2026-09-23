@@ -289,10 +289,42 @@ export class MunicipalService {
     return null;
   }
 
+  /**
+   * A fonte publica município para esta área?
+   *
+   * Lido do próprio arquivo de configuração do TSE, e não do andamento do laço de coleta: era lá
+   * que a resposta estava sendo decidida, e de lá ela não saía — a tabela de cidades girava em
+   * "Recebendo os resultados por município" para sempre. Medido em 23/09/2026, o simulado publica
+   * município de um lugar só no país inteiro (Fernando de Noronha, PE), então para qualquer outro
+   * estado não há o que esperar, e a tela precisa dizer isso.
+   *
+   * `null` enquanto a configuração ainda não chegou: aí "buscando" é verdade.
+   */
+  private fontePublicaMunicipios(job: Job): boolean | null {
+    const alvo = this.target(job);
+    if (!alvo) return null;
+    const bruto = this.rawConfigs.get(alvo.configUrl);
+    if (bruto === undefined) return null;
+    return readConfig(bruto, job.area).length > 0;
+  }
+
   private payload(job: Job, uf: string): MunicipalPayload {
     const race = this.hooks.race(job.mode, uf, job.turn, job.office);
     const namesAt = race ? race.receivedAt : 0;
-    if (job.body && job.body.version === job.version && job.body.namesAt === namesAt) return { ...job.body.payload, uf, status: job.status, message: job.message, fetches: job.fetches, sourceAt: job.sourceAt };
+    /*
+     * A última palavra sobre "não tem" é da configuração do TSE, não do laço de coleta.
+     *
+     * Só vale enquanto não chegou linha nenhuma: com cidades já recebidas, o que está na tela é
+     * verdade e continua valendo. E precisa ser decidido antes do atalho de cache logo abaixo,
+     * senão a resposta guardada devolve a mensagem antiga e o conserto não aparece.
+     */
+    let status = job.status;
+    let message = job.message;
+    if (job.mode !== 'historico' && !job.rows.size && this.fontePublicaMunicipios(job) === false) {
+      status = 'unavailable';
+      message = `O TSE não publica resultado por município ${job.area === 'BR' ? 'nesta fonte' : `de ${job.area} nesta fonte`}.`;
+    }
+    if (job.body && job.body.version === job.version && job.body.namesAt === namesAt) return { ...job.body.payload, uf, status, message, fetches: job.fetches, sourceAt: job.sourceAt };
     const totals = new Map<string, number>();
     for (const row of job.rows.values()) for (const [n, v] of row.cand) totals.set(n, (totals.get(n) || 0) + v);
     const c = [...totals].sort((a, b) => b[1] - a[1]);
@@ -309,7 +341,7 @@ export class MunicipalService {
     const n: MunicipalPayload['n'] = {};
     if (race) for (const cand of race.candidates) if (totals.has(cand.number)) n[cand.number] = [cand.name, cand.party];
     const payload: MunicipalPayload = {
-      mode: job.mode, uf, turn: job.turn, office: job.office, area: job.area, status: job.status, message: job.message,
+      mode: job.mode, uf, turn: job.turn, office: job.office, area: job.area, status, message,
       loaded: job.muns.length ? Math.min(job.rows.size, job.muns.length) : 0, total: job.muns.length, version: job.version, sourceAt: job.sourceAt, fetches: job.fetches, c, m, n,
     };
     job.body = { version: job.version, namesAt, payload };
@@ -370,7 +402,26 @@ export class MunicipalService {
         const target = this.target(job);
         if (!target) { job.status = job.rows.size ? job.status : 'waiting'; job.message = 'Aguardando a configuração da eleição ser publicada pelo TSE.'; await sleep(10_000); continue; }
         const muns = await this.config(target.configUrl, job.area, job.mode === 'historico' ? ARCHIVE_TTL : 10 * 60_000);
-        if (!muns) { if (!job.muns.length) job.message = 'Buscando a lista de municípios no TSE.'; await sleep(5000); continue; }
+        if (!muns) {
+          /*
+           * Faltar a lista quer dizer duas coisas diferentes, e dizer "buscando" nas duas era o que
+           * fazia a tabela de cidades parecer quebrada.
+           *
+           * Se o arquivo de configuração ainda não chegou, estamos mesmo buscando. Mas se ele
+           * chegou e esta área não está nele, não há o que buscar, e a tela precisa dizer isso em
+           * vez de girar para sempre prometendo resultados que a fonte não tem.
+           */
+          const lida = this.rawConfigs.has(target.configUrl);
+          if (lida && !job.muns.length) {
+            job.status = 'unavailable';
+            job.message = `O TSE não publica resultado por município ${job.area === 'BR' ? 'nesta fonte' : `de ${job.area} nesta fonte`}.`;
+            await sleep(60_000);
+          } else {
+            if (!job.muns.length) job.message = 'Buscando a lista de municípios no TSE.';
+            await sleep(5000);
+          }
+          continue;
+        }
         if (!job.muns.length || job.muns.length !== muns.length || !job.muns[0].cd) {
           job.muns = muns;
           // A different list (e.g. a country-wide config read before the state one) leaves rows that do not
@@ -381,6 +432,8 @@ export class MunicipalService {
           for (const k of [...job.fetched.keys()]) if (!keepCodes.has(k)) job.fetched.delete(k);
         }
         if (job.status === 'loading' && !job.rows.size) job.message = 'Buscando os resultados por município no TSE.';
+        // A faixa municipal é uma só: quem não é a varredura da vez espera (ver `vezDeVarrer`).
+        if (!this.vezDeVarrer(job)) { await sleep(2000); continue; }
         if (job.mode !== 'historico') {
           // Live: read the UF progress file and fetch only the cities whose stamp changed; rotation only as a fallback.
           if (job.rows.size < job.muns.length) { job.status = 'loading'; job.message = 'Recebendo os resultados por município.'; }
@@ -411,16 +464,62 @@ export class MunicipalService {
    * Live delta pass. The viewer's UF file every AB_INTERVAL; for the president (Brazil) one more UF per pass, in rotation.
    * Returns false when no progress file could be read yet, 'idle' when nothing changed, true after fetching changed cities.
    */
+  /**
+   * Uma varredura de cada vez, e é a da tela.
+   *
+   * Cada cargo aberto vira um job próprio, e cada estado visitado mais um punhado: com o painel de
+   * Minas aberto havia cerca de vinte e oito varreduras simultâneas dividindo a mesma faixa.
+   * Medido em 23/09/2026, durante a janela: 42 req/s de arquivos municipais no total, e o job que
+   * enchia a tabela na tela recebia 1,5 desses 42. Banda não faltava; faltava ordem — ninguém
+   * terminava porque todos andavam um pouquinho.
+   *
+   * A regra é a mais simples que resolve: quem foi pedido mais recentemente e ainda não fechou leva
+   * a faixa inteira. Os outros esperam. Com 42 req/s, as 853 cidades de um cargo fecham em vinte
+   * segundos, e aí a vez passa sozinha para o próximo — os demais cargos do mesmo estado primeiro,
+   * porque continuam sendo os mais pedidos enquanto o painel está aberto.
+   */
+  private vezDeVarrer(job: Job): boolean {
+    const agora = Date.now();
+    let melhor: Job | null = null;
+    for (const j of this.jobs.values()) {
+      if (agora - j.lastRequest > KEEPALIVE) continue;                 // ninguém está olhando para este
+      if (j.muns.length && j.rows.size >= j.muns.length) continue;     // já completo: não disputa
+      if (!melhor || j.lastRequest > melhor.lastRequest) melhor = j;
+    }
+    return melhor === null || melhor === job;
+  }
+
   private async delta(job: Job, target: NonNullable<ReturnType<MunicipalService['target']>>): Promise<boolean | 'idle'> {
     if (!target.ab) return false;
     const ufs = [...new Set(job.muns.map(m => m.uf))];
     const focus = ufs.includes(job.focus) ? job.focus : ufs[0];
     const others = ufs.filter(u => u !== focus);
-    const read = others.length ? [focus, others[job.abRotation++ % others.length]] : [focus];
+
+    /*
+     * Enquanto o estado que está na tela não fechar, só ele é buscado.
+     *
+     * O arquivo municipal da presidência é nacional: 5.571 municípios. Varrer o país inteiro
+     * enquanto alguém olha um estado gasta a faixa toda enchendo telas que ninguém abriu, e é o
+     * que fazia a tabela de cidades demorar a aparecer mesmo com a coleta funcionando. Os outros
+     * estados entram quando o da tela fecha — que é também quando sobra faixa para eles.
+     *
+     * "O da tela" é sempre o selecionado agora, não o de quando a volta começou: trocar de estado
+     * redireciona a coleta imediatamente (ver a checagem de `job.focus` dentro do trabalhador).
+     *
+     * O andamento dos outros também não é lido nessa fase: é uma requisição por passada que só
+     * serviria para marcar como sujas cidades que não vão ser buscadas agora.
+     */
+    const doFoco = job.muns.filter(m => m.uf === focus);
+    const focoCompleto = doFoco.length > 0 && doFoco.every(m => job.rows.has(m.cdi));
+    const read = focoCompleto && others.length ? [focus, others[job.abRotation++ % others.length]] : [focus];
     for (const uf of read) {
       const url = target.ab(uf);
       const raw = await this.transport.get(url, AB_INTERVAL, { retain: false, timeoutMs: 20_000 });
-      if (!raw || raw === NOT_MODIFIED) continue;
+      // 304 quer dizer que o andamento deste estado continua valendo, e os carimbos dele já estão
+      // guardados — o estado segue visto. Sem esta linha ele saía de `abSeen` na segunda passada e
+      // as cidades dele paravam de ser consideradas.
+      if (raw === NOT_MODIFIED) { job.abSeen.add(uf); continue; }
+      if (!raw) continue;
       try {
         const ab = parseAb(raw, target.election);
         for (const [cd, city] of ab.cities) job.stamps.set(`${uf}${cd}`, city);
@@ -430,8 +529,20 @@ export class MunicipalService {
     }
     if (!job.abSeen.size) return false;
     const stampOf = (m: MunRef) => job.stamps.get(`${m.uf}${m.cd}`);
-    const dirty = job.muns
-      .filter(m => job.abSeen.has(m.uf) && (!job.rows.has(m.cdi) || (stampOf(m) && job.fetched.get(m.cdi) !== stampOf(m)!.stamp)))
+    /*
+     * Cidade que nunca foi buscada entra sempre; as já buscadas, só quando o carimbo muda.
+     *
+     * A condição exigia `abSeen` para as duas coisas, e `delta` lê o andamento de dois estados por
+     * passada — o em foco e um por rodízio. Os outros nunca entravam, suas cidades nunca eram
+     * consideradas sujas, e como `delta` devolvia 'idle' a varredura completa (`pass`) também não
+     * rodava: a presidência parava em 575 dos 5.571 municípios e ficava ali. A tabela de cidades
+     * abria vazia porque ninguém tinha ido buscar.
+     *
+     * O carimbo continua mandando na releitura, que é o que mantém a conta de requisições baixa
+     * depois que a primeira volta termina.
+     */
+    const dirty = (focoCompleto ? job.muns : doFoco)
+      .filter(m => !job.rows.has(m.cdi) || (job.abSeen.has(m.uf) && stampOf(m) && job.fetched.get(m.cdi) !== stampOf(m)!.stamp))
       .sort((a, b) => Number(b.uf === focus) - Number(a.uf === focus) || (stampOf(b)?.te || 0) - (stampOf(a)?.te || 0));
     if (!dirty.length) return 'idle';
     let i = 0;
@@ -439,6 +550,15 @@ export class MunicipalService {
       while (i < dirty.length) {
         const m = dirty[i++];
         if (Date.now() - job.lastRequest > KEEPALIVE || this.transport.cooldownUntil > Date.now()) return;
+        /*
+         * Trocou o estado na tela? Esta volta perdeu a validade.
+         *
+         * Sem isto, escolher São Paulo no meio de uma varredura de Minas deixava os dezesseis
+         * trabalhadores terminarem as 853 cidades mineiras antes de olhar para São Paulo — minutos
+         * enchendo uma tela que ninguém está mais vendo. A próxima volta já monta a lista do estado
+         * novo, então basta sair daqui.
+         */
+        if (job.focus !== focus) return;
         const stamp = stampOf(m)?.stamp ?? '';
         const url = target.url(m);
         const raw = await this.transport.get(url, 1500, { priority: 'low', retain: false, timeoutMs: 30_000, expectMissing: true });
@@ -498,6 +618,11 @@ export class MunicipalService {
     if (source && (!cached || (raw && raw !== NOT_MODIFIED))) {
       const muns = readConfig(source, area);
       if (muns.length) this.configs.set(key, muns);
+      // Uma fonte que não lista municípios para esta área não é falha de rede, e vira mensagem na
+      // tela em vez de espera eterna — vale registrar quando acontece.
+      // Uma fonte que não lista municípios para esta área não é falha de rede: vira mensagem na
+      // tela em vez de espera eterna, e vale registrar quando acontece.
+      else console.log(`Municípios: a configuração do TSE (${url}) não traz ${area}.`);
     }
     return this.configs.get(key) ?? null;
   }
