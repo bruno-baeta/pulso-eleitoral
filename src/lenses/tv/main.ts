@@ -517,6 +517,8 @@ async function main() {
     });
     animarTrocas(antes);
     void repintarCadeiras();
+    repintarDisputa();
+    repintarCidades();
   };
 
   /*
@@ -605,24 +607,40 @@ async function main() {
    * dele. É a resposta para "e o fulano, com quantos está?", que num painel de três linhas não
    * tem onde ser feita.
    */
-  const abrirDisputa = (office: Office, destaque?: string) => {
+  /** A folha da disputa inteira, quando está aberta: `desenhar` a repinta junto com o painel. */
+  let disputaAberta: { office: Office; destaque?: string; folha: ReturnType<typeof abrirTabela> } | null = null;
+
+  const opcoesDisputa = (office: Office, destaque?: string) => {
     const race = snap?.races?.[office];
-    if (!race?.candidates.length) return;
+    if (!race?.candidates.length) return null;
     const nome = [...CORRIDAS, ...CADEIRAS].find(c => c.key === office)?.nome ?? office;
     const onde = office === 'president' ? 'Brasil' : stateName(UF);
     const vagas = office === 'senate' ? (race.seats > 0 ? race.seats : 2)
       : office === 'federal' || office === 'state' ? race.seats : 0;
-    abrirTabela({
+    return {
       titulo: nome,
       subtitulo: `${onde} · ${fmtPercent(race.countedPercent, 1)} apurado`,
       candidatos: race.candidates,
       corte: vagas || undefined,
       destaque,
-      aoEscolher: c => abrirCidades(office, c),
+      aoEscolher: (c: Candidate) => abrirCidades(office, c),
       completar: race.candidateCount && race.candidateCount > race.candidates.length
         ? () => listaCompleta(office)
         : undefined,
-    });
+    };
+  };
+
+  const abrirDisputa = (office: Office, destaque?: string) => {
+    const opcoes = opcoesDisputa(office, destaque);
+    if (!opcoes) return;
+    disputaAberta = { office, destaque, folha: abrirTabela(opcoes) };
+  };
+
+  const repintarDisputa = () => {
+    if (!disputaAberta) return;
+    if (!disputaAberta.folha.aberta()) { disputaAberta = null; return; }
+    const opcoes = opcoesDisputa(disputaAberta.office, disputaAberta.destaque);
+    if (opcoes) disputaAberta.folha.atualizar(opcoes);
   };
 
   /**
@@ -687,17 +705,31 @@ async function main() {
   };
 
   /** As cidades de uma candidatura: onde os votos dela foram dados. */
+  /** A folha de cidades, quando está aberta: `desenhar` manda ela buscar de novo. */
+  let cidadesAbertas: { office: Office; id: string; folha: ReturnType<typeof abrirCandidato> } | null = null;
+
+  const legendaCidades = (c: Candidate) =>
+    `${c.party}${c.number ? ` ${c.number}` : ''} · ${fmtInt(c.votes)} votos · ${fmtPercent(c.percent, 2)}`;
+
+  const repintarCidades = () => {
+    if (!cidadesAbertas) return;
+    if (!cidadesAbertas.folha.aberta()) { cidadesAbertas = null; return; }
+    const c = snap?.races?.[cidadesAbertas.office]?.candidates.find(x => x.id === cidadesAbertas!.id);
+    cidadesAbertas.folha.recarregar(c ? { subtitulo: legendaCidades(c), votos: c.votes } : undefined);
+  };
+
   const abrirCidades = (office: Office, c: Candidate) => {
-    abrirCandidato({
+    const folha = abrirCandidato({
       titulo: [...CORRIDAS, ...CADEIRAS].find(x => x.key === office)?.nome ?? office,
       nome: c.name,
-      subtitulo: `${c.party}${c.number ? ` ${c.number}` : ''} · ${fmtInt(c.votes)} votos · ${fmtPercent(c.percent, 2)}`,
+      subtitulo: legendaCidades(c),
       votos: c.votes,
       numero: c.number ?? '',
       cor: c.color || '#8a94a6',
       mode: MODE, uf: UF, turn: TURN, office,
       momento: () => momento,
     });
+    cidadesAbertas = { office, id: c.id, folha };
   };
 
   palco.addEventListener('click', e => {

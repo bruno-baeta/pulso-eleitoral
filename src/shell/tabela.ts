@@ -50,6 +50,7 @@ const situacao = (c: Candidate): [string, string] => {
 };
 
 export function abrirTabela(o: TabelaOpcoes) {
+  /* `o` é reatribuído por `atualizar`: a folha troca de conteúdo sem ser remontada. */
   montarCss();
   document.querySelector('.tbl-fundo')?.remove();
 
@@ -73,6 +74,7 @@ export function abrirTabela(o: TabelaOpcoes) {
   const busca = folha.querySelector('input')!;
   const corpo = folha.querySelector('tbody')!;
   let ordem = [...o.candidatos].sort((a, b) => b.votes - a.votes);
+  let primeira = true;
 
   const desenhar = () => {
     const q = dobrar(busca.value.trim());
@@ -103,7 +105,9 @@ export function abrirTabela(o: TabelaOpcoes) {
       corpo.insertAdjacentHTML('beforeend',
         `<tr><td colspan="7" class="n">Mostrando 400 de ${fmtInt(achados.length)} candidaturas. Use a busca para encontrar as demais.</td></tr>`);
     }
-    corpo.querySelector('tr.hl')?.scrollIntoView({ block: 'center' });
+    // Centralizar o destaque só na primeira pintura: repetir isso a cada atualização jogaria a
+    // rolagem de volta enquanto a pessoa está lendo outra parte da lista.
+    if (primeira) { corpo.querySelector('tr.hl')?.scrollIntoView({ block: 'center' }); primeira = false; }
   };
 
   const fechar = () => { fundo.remove(); removeEventListener('keydown', naTecla); };
@@ -126,12 +130,30 @@ export function abrirTabela(o: TabelaOpcoes) {
   // com destaque o leitor veio de um nome: a folha abre parada nele, e a busca esperaria digitação
   if (!o.destaque) busca.focus();
 
+  /*
+   * A folha acompanha a apuração enquanto está aberta.
+   *
+   * Aberta durante a reprodução ela ficava no retrato de quando foi aberta: votos de um instante
+   * sobre um painel que já estava em outro. A busca digitada e a rolagem ficam onde estão — só os
+   * números e o cabeçalho trocam.
+   */
+  const atualizar = (novo: TabelaOpcoes) => {
+    if (!fundo.isConnected) return;
+    o = novo;
+    ordem = [...novo.candidatos].sort((a, b) => b.votes - a.votes);
+    folha.querySelector('.s')!.textContent = `${novo.subtitulo} · ${fmtInt(ordem.length)} candidaturas`;
+    desenhar();
+  };
+
   void o.completar?.().then(todas => {
     if (!todas.length || !fundo.isConnected) return;
     ordem = [...todas].sort((a, b) => b.votes - a.votes);
     folha.querySelector('.s')!.textContent = `${o.subtitulo} · ${fmtInt(ordem.length)} candidaturas`;
     desenhar();
   }).catch(() => { /* fica a cabeça da lista, que é o que o painel já tinha */ });
+
+  /** Quem abriu mantém isto para repintar enquanto a apuração anda. */
+  return { atualizar, aberta: () => fundo.isConnected };
 }
 
 /**
@@ -329,6 +351,26 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   document.body.appendChild(fundo);
   estado.textContent = 'Carregando municípios…';
   void carregar();
+
+  /*
+   * Quem abriu repete a busca a cada volta do painel.
+   *
+   * Reproduzindo, o instante não anda sozinho — o laço interno de repetição só existe para o ao
+   * vivo. Sem isto a folha ficava nas cidades de quando foi aberta enquanto a gravação corria.
+   */
+  return {
+    /** `novo` traz o cabeçalho do instante no ar: os votos da candidatura também andam. */
+    recarregar: (novo?: { subtitulo: string; votos: number }) => {
+      if (fechada) return;
+      if (novo) {
+        o.subtitulo = novo.subtitulo;
+        o.votos = novo.votos;
+        folha.querySelector('.s')!.textContent = `${o.titulo} · ${o.subtitulo}`;
+      }
+      void carregar();
+    },
+    aberta: () => fundo.isConnected,
+  };
 }
 
 const titulo = titleCase;
