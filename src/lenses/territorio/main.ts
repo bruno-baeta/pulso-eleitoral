@@ -12,7 +12,7 @@ import '@fontsource/barlow-condensed/500.css';
 import '@fontsource/barlow-condensed/600.css';
 import '@fontsource/barlow-condensed/700.css';
 import { COLORS, STATES, partyColor, partySlot, type Office, type WireRace as Race, type Snapshot } from '../../../shared/types';
-import { MODE, TURN, UF, el, esc, fmtInt, fmtPercent, initials, loadSnapshot, party, photoUrl, shortVotes, stateName, titleCase } from '../../raias/common';
+import { MODE, TURN, UF, el, esc, fmtInt, fmtPercent, initials, loadSnapshot, party, photoUrl, shortVotes, stateName, titleCase } from '../../shell/dados';
 import { mountPlayer } from '../../shell/player';
 import { HIT_CSS, hitInner, ROW_CSS, rowInner, seedScale } from '../../shell/row';
 import { mountShellBar, mountShellNote, pageReady } from '../../shell/shell';

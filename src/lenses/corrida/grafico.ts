@@ -8,14 +8,14 @@ import '@fontsource-variable/dm-sans/wght.css';
 import '@fontsource/barlow-condensed/500.css';
 import '@fontsource/barlow-condensed/600.css';
 import '@fontsource/barlow-condensed/700.css';
-import type { Office, WireRace as Race, Snapshot } from '../../shared/types';
-import type { RankedCandidate } from '../types/election';
-import { SIMULADO_WINDOWS, describeWindow, nextWindow, openWindow } from '../../shared/windows';
-import type { Timeline } from './common';
-import { mountPlayer } from '../shell/player';
-import { HIT_CSS, hitInner, seedScale } from '../shell/row';
-import { mountShellBar, mountShellNote, pageReady } from '../shell/shell';
-import { all, contestedSeats, el, esc, fmtInt, fmtPercent, fmtShortTime, fold, initials, loadSnapshot, loadTimeline, MODE, party, photoUrl, seatsByParty, shortVotes, stateName, titleCase, TURN, UF, YEAR } from './common';
+import type { Office, WireRace as Race, Snapshot } from '../../../shared/types';
+import type { RankedCandidate } from '../../types/election';
+import { SIMULADO_WINDOWS, describeWindow, nextWindow, openWindow } from '../../../shared/windows';
+import type { Timeline } from '../../shell/dados';
+import { mountPlayer } from '../../shell/player';
+import { HIT_CSS, hitInner, seedScale } from '../../shell/row';
+import { mountShellBar, mountShellNote, pageReady } from '../../shell/shell';
+import { all, contestedSeats, el, esc, fmtInt, fmtPercent, fmtShortTime, fold, initials, loadSnapshot, loadTimeline, MODE, party, photoUrl, seatsByParty, shortVotes, stateName, titleCase, TURN, UF, YEAR } from '../../shell/dados';
 
 const css = `
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0c0c; font-family: 'DM Sans Variable', system-ui, sans-serif; color: #eeece6; }
@@ -31,7 +31,7 @@ const css = `
   .sh-head .tabs button:hover { color: #d8d5cd; }
   .sh-head .tabs button.on { background: #2f3431; color: #f2efe8; border: 0; }
   #app.mobile .tabs { display: flex; }
-  /* ── as raias: uma coluna por disputa, com a curva de cada candidatura no tempo ── */
+  /* ── as colunas: uma por disputa, com a curva de cada candidatura no tempo ── */
   .gscope { margin-left: auto; display: inline-flex; gap: calc(2px * var(--k)); padding: calc(3px * var(--k)); border-radius: 999px; background: rgba(255,255,255,.05); }
   .gscope[hidden] { display: none; }
   .gscope button { all: unset; cursor: pointer; display: inline-flex; align-items: center; height: calc(26px * var(--k)); padding: 0 calc(12px * var(--k)); border-radius: 999px; font-size: calc(16px * var(--k)); font-weight: 600; letter-spacing: .04em; color: #85837c; }

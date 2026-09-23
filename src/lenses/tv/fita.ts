@@ -11,7 +11,7 @@
  * Esta peça não sabe desenhar nada do painel: ela decide qual instante está no ar e pede a quem
  * sabe, por `mostrar`.
  */
-import { loadTimeline, type Timeline } from '../../raias/common';
+import { loadTimeline, type Timeline } from '../../shell/dados';
 
 /** As acelerações oferecidas, em minutos de apuração por segundo de relógio. */
 export const VELOCIDADES = [1, 60, 100];

@@ -1,3 +1,11 @@
+/**
+ * De qual apuração a tela está falando, e de onde os números vêm.
+ *
+ * As três telas são documentos separados, e esta é a peça que faz as três concordarem: ela lê o
+ * modo, o estado e o turno da URL (caindo para o que este navegador usou por último), abre o
+ * fluxo de eventos do servidor e sabe pedir um snapshot de agora ou de um instante gravado.
+ * Nenhuma tela fala com a API por fora daqui.
+ */
 import { STATES, type WireRace as Race, type Snapshot, type Turn } from '../../shared/types';
 import { rankCandidates } from '../domain/derive';
 import { SIMULADO_WINDOWS, openWindow } from '../../shared/windows';

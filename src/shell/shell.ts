@@ -3,12 +3,12 @@
  * a slim header with the app name and the only two controls worth keeping in sight — the view
  * dropdown and the year — with state and round tucked into a menu. The footnote at the bottom
  * carries the count and its source. Selection lives in the URL (+ localStorage) through
- * src/raias/common.ts.
+ * src/shell/dados.ts.
  */
 import { STATES, type Turn } from '../../shared/types';
 import { SIMULADO_WINDOWS, describeWindow, nextWindow, openWindow } from '../../shared/windows';
 import { fmtShortTime } from '../domain/format';
-import { MODE, TURN, UF, esc, navigate, type Mode } from '../raias/common';
+import { MODE, TURN, UF, esc, navigate, type Mode } from './dados';
 
 export type LensKey = 'corrida' | 'territorio' | 'tv';
 export const LENSES: { key: LensKey; label: string; path: string }[] = [

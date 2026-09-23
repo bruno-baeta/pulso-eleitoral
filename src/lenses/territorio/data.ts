@@ -4,7 +4,7 @@
  */
 import type { Office } from '../../../shared/types';
 import { fold as foldBase } from '../../domain/format';
-import { MODE, TURN, UF, titleCase } from '../../raias/common';
+import { MODE, TURN, UF, titleCase } from '../../shell/dados';
 
 export type Status = 'ready' | 'loading' | 'waiting' | 'paused' | 'unavailable';
 export interface Payload {

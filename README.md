@@ -103,13 +103,13 @@ npm run baseline  # compara as telas com as imagens de referência
 Estrutura:
 
 ```
-src/lenses/tv/        a tela TV
+src/lenses/tv/         a tela TV (main, estilo, player de replay)
+src/lenses/corrida/    a tela Corrida (as curvas no tempo)
 src/lenses/territorio/ o mapa municipal
-src/raias/            a tela Corrida
-src/shell/            cabeçalho, player, tabela — o que as três compartilham
-src/domain/           ranking, situação do candidato, formatação
-server/               coletor do TSE, gravação, replay e a API
-shared/               o contrato entre os dois lados
+src/shell/             o que as três compartilham: cabeçalho, player, tabela e dados
+src/domain/            ranking, situação do candidato, vagas, formatação
+server/                coletor do TSE, gravação, replay e a API
+shared/                o contrato entre os dois lados
 ```
 
 ## Licença

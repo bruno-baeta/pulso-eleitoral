@@ -6,7 +6,7 @@
  * painel de três linhas, e quem assiste tem essa pergunta o tempo todo. Aqui ela é respondida sem
  * sair da tela: o título abre o cargo inteiro, o nome abre o cargo inteiro já parado naquela linha.
  *
- * O desenho é o mesmo da tabela da Corrida (src/raias/linhas.ts), que é onde ele nasceu: fundo
+ * O desenho é o mesmo da tabela da Corrida (src/lenses/corrida/grafico.ts), que é onde ele nasceu: fundo
  * escurecido atrás, folha centrada, busca no cabeçalho, cabeçalho de coluna que gruda ao rolar.
  * Esta é uma versão independente para não mexer numa tela que já está no ar.
  */

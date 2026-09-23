@@ -6,7 +6,7 @@
  * Reading order, left to right: transport, live state, the rail, the clock, the speed. The
  * rail is a thin line that thickens under the pointer, with a handle riding its head.
  */
-import { loadTimeline, onSnapshot, type Timeline } from '../raias/common';
+import { loadTimeline, onSnapshot, type Timeline } from './dados';
 import { mountShellCss } from './shell';
 
 export interface Replay { live: boolean; playing: boolean; speed: number; at: number }

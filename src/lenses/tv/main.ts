@@ -19,7 +19,7 @@ import '@fontsource-variable/dm-sans/wght.css';
 import '@fontsource/barlow-condensed/600.css';
 import '@fontsource/barlow-condensed/700.css';
 import type { Candidate, Office, WireRace as Race, Snapshot } from '../../../shared/types';
-import { MODE, TURN, UF, esc, fmtInt, fmtPercent, loadSnapshot, onSnapshot, stateName } from '../../raias/common';
+import { MODE, TURN, UF, esc, fmtInt, fmtPercent, loadSnapshot, onSnapshot, stateName } from '../../shell/dados';
 import { mountShellBar, pageReady } from '../../shell/shell';
 import { seedScale } from '../../shell/row';
 import { publishedStatus } from '../../domain/derive';
