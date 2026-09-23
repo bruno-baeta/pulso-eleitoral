@@ -114,29 +114,47 @@ function montarEstilo() {
 
 /* Comentario de CSS sem crase: uma crase aqui fecharia o template literal. */
 const CSS = `
-.bnc .preco { margin: 0 0 18px; font-size: 15px; color: var(--tinta-2, #b9c2cc); }
-.bnc .preco b { color: inherit; font-variant-numeric: tabular-nums; }
+/* Na casca o que empurra o fechar para a direita e o margin-left:auto do campo de busca. Esta
+   folha nao tem busca, entao o X ficava encostado no titulo, no meio da linha. */
+.bnc header button { margin-left: auto; }
 
-.bnc .hemi { display: flex; flex-wrap: wrap; gap: 18px 22px; margin-bottom: 16px; }
-.bnc .grupo { display: flex; flex-direction: column; gap: 7px; }
-.bnc .assentos { display: flex; flex-wrap: wrap; gap: 4px; max-width: 220px; }
+/* O recuo lateral e o mesmo da casca (2.2vw no cabecalho, no rodape e no .estado). Sem ele estes
+   blocos comecavam na borda e a folha ficava com tres margens esquerdas diferentes. */
+.bnc .preco { margin: 0; padding: 1.8vh 2.2vw 0; font-size: clamp(12px, .9vw, 17px);
+  line-height: 1.5; color: #b9b6ae; }
+.bnc .preco b { color: #f6f3ec; font-variant-numeric: tabular-nums; }
 
-/* Cheia é cadeira publicada pelo TSE; vazada é projecao. A diferenca precisa ser visivel de
-   longe, entao ela e de preenchimento, nao de tom. */
-.bnc .assento { width: 15px; height: 15px; border-radius: 50%; background: var(--cor); display: block; }
+/* Grade, nao linha solta: numa fileira as celulas tem a mesma altura, entao as siglas assentam
+   todas na mesma base. Com flex, uma bancada que quebrava para a segunda fileira de bolinhas
+   empurrava so a sigla dela para baixo e serrilhava a linha inteira. */
+.bnc .hemi { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(160px, 14vw, 250px), 1fr));
+  gap: 2.4vh 1.6vw; padding: 2.2vh 2.2vw 0; align-items: stretch; }
+.bnc .grupo { display: flex; flex-direction: column; justify-content: flex-end; gap: 1vh; }
+.bnc .assentos { display: flex; flex-wrap: wrap; align-content: flex-end; gap: 5px; }
+
+/* Cheia e cadeira publicada pelo TSE; vazada e projecao. A diferenca e de preenchimento, nao de
+   tom, porque precisa ser visivel de longe. */
+.bnc .assento { width: clamp(13px, 1vw, 19px); aspect-ratio: 1; border-radius: 50%;
+  background: var(--cor); flex: none; }
 .bnc .assento.previsto { background: transparent; box-shadow: inset 0 0 0 2px var(--cor); }
 
-.bnc .sigla { font-size: 13px; opacity: .85; white-space: nowrap; }
+.bnc .sigla { font-size: clamp(10px, .78vw, 15px); white-space: nowrap; color: #8b8981; }
 .bnc .sigla span { color: var(--cor); font-weight: 600; }
-.bnc .sigla b { font-variant-numeric: tabular-nums; }
+.bnc .sigla b { color: #f6f3ec; font-variant-numeric: tabular-nums; margin-left: .2em; }
 
-.bnc .nota { margin: 0 0 16px; font-size: 13px; opacity: .7; line-height: 1.5; }
-.bnc tr.fora td { opacity: .45; }
-.bnc .pt { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: baseline; }
-.bnc .vazio { padding: 24px 0; text-align: center; opacity: .6; }
+.bnc .nota { margin: 0; padding: 2vh 2.2vw; font-size: clamp(10px, .78vw, 15px);
+  line-height: 1.55; color: #6a6863; }
+.bnc .nota b { color: #b9b6ae; }
+.bnc .vazio { margin: 0; padding: 4vh 2.2vw 0; text-align: center; color: #6a6863;
+  font-size: clamp(11px, .85vw, 16px); }
+
+.bnc table { margin-top: .6vh; }
+.bnc tr.fora td { color: #5c605b; }
+.bnc .pt { display: inline-block; width: .62em; height: .62em; border-radius: 50%;
+  margin-right: .6em; vertical-align: middle; }
 
 @media (max-width: 720px) {
-  .bnc .assentos { max-width: 150px; }
-  .bnc .hemi { gap: 14px; }
+  .bnc .assentos { width: 46vw; }
+  .bnc .hemi { gap: 2vh 6vw; }
 }
 `;
