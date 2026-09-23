@@ -15,7 +15,8 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "baseline": "node scripts/baseline.mjs",
     "typecheck": "tsc --noEmit",
-    "data:territorio": "node scripts/territorio-2022.mjs"
+    "data:territorio": "node scripts/territorio-2022.mjs",
+    "test:telas": "node tests/telas.mjs"
   },
   "dependencies": {
     "@fastify/static": "^10.1.3",

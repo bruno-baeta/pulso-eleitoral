@@ -95,9 +95,10 @@ Configuração opcional em `.env` — veja `.env.example`.
 ## Desenvolvimento
 
 ```bash
-npm test          # testes unitários (node:test)
-npm run typecheck # tsc --noEmit
-npm run baseline  # compara as telas com as imagens de referência
+npm test           # as contas: ranking, situação, escala, gravação, limites do TSE
+npm run test:telas # as três telas num navegador de verdade (precisa do npm run dev no ar)
+npm run typecheck  # tsc --noEmit
+npm run baseline   # grava a referência de pixels; -- check compara com ela
 ```
 
 Estrutura:
