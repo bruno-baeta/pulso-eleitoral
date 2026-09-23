@@ -55,21 +55,28 @@ let snap: Snapshot | null = null;
 interface Movimento { dir: 1 | -1; texto: string; titulo: string }
 const posicaoAnterior = new Map<string, number>();
 const folgaAnterior = new Map<string, number>();
+const folgaVotosAnterior = new Map<string, number>();
 const movimentos = new Map<string, Movimento>();
 function registrarMovimento(office: Office, race: Race, ordem: Race['candidates']) {
   ordem.forEach((c, i) => {
     const chave = `${office}:${race.election}:${race.uf}:${race.turn}:${c.id}`;
     const lugar = i + 1;
     const antesLugar = posicaoAnterior.get(chave), antesFolga = folgaAnterior.get(chave);
+    const antesFolgaVotos = folgaVotosAnterior.get(chave);
     /*
-     * A folga: quantos votos separam esta candidatura da que vem logo abaixo.
+     * A folga: o quanto esta candidatura está à frente da que vem logo abaixo.
+     *
+     * Medida duas vezes, porque as duas medidas servem para coisas diferentes: em votos, que é o
+     * que o selo mostra, e em ponto percentual, que é o que decide para que lado a seta aponta.
      *
      * A última da lista não tem ninguém abaixo, então para ela a folga é negativa — a distância
      * que falta para alcançar quem está acima. Nos dois casos o sinal quer dizer a mesma coisa:
      * subiu, está melhor; desceu, está pior.
      */
     const abaixo = ordem[i + 1], acima = ordem[i - 1];
-    const folga = abaixo ? c.percent - abaixo.percent : acima ? c.percent - acima.percent : 0;
+    const vizinho = abaixo ?? acima;
+    const folga = vizinho ? c.percent - vizinho.percent : 0;
+    const folgaVotos = vizinho ? c.votes - vizinho.votes : 0;
     if (antesLugar !== undefined && antesLugar !== lugar) {
       const passos = antesLugar - lugar;                       // positivo: subiu na lista
       movimentos.set(chave, {
@@ -78,42 +85,46 @@ function registrarMovimento(office: Office, race: Race, ordem: Race['candidates'
         titulo: `${passos > 0 ? 'Subiu' : 'Caiu'} ${Math.abs(passos)} `
           + `${Math.abs(passos) === 1 ? 'posição' : 'posições'} desde a última atualização`,
       });
-    } else if (antesFolga !== undefined && Math.abs(folga - antesFolga) >= 0.001) {
+    } else if (antesFolga !== undefined && antesFolgaVotos !== undefined
+               && Math.abs(folgaVotos - antesFolgaVotos) >= 1 && folga !== antesFolga) {
       /*
-       * Sem troca de posição, a seta mostra se a vantagem abriu ou encurtou — não quantos votos
-       * entraram.
+       * O número é a distância em votos; a seta é o que essa distância fez, medida em ponto
+       * percentual. São duas medidas de propósito, e a separação é o ponto todo deste selo.
        *
-       * Voto ganho é um número que só sobe: numa apuração, todo mundo ganha votos o tempo todo, e
-       * a seta ficava verde em todas as linhas ao mesmo tempo dizendo nada. O que muda de fato
-       * entre duas leituras é a distância para quem está logo atrás — é ela que diz se a disputa
-       * está se resolvendo ou apertando, e é a única leitura que antecipa a ultrapassagem antes
-       * de ela acontecer. Em pontos percentuais, e não em votos: a folga em votos cresce sozinha
-       * conforme o eleitorado apurado aumenta, enquanto o ponto percentual é a mesma medida do
-       * começo ao fim da noite.
+       * O número em votos porque é assim que se pensa numa apuração — "está 80.200 votos à frente"
+       * diz algo que "0,33 pp" não diz. E porque em disputa proporcional o ponto percentual
+       * simplesmente não tem resolução: nos deputados estaduais de Minas, as cinco primeiras
+       * distâncias eram 1, 8, 0, 2 e 4 votos, e todas apareciam como "0,000 pp". O selo existia
+       * mostrando zero.
+       *
+       * A seta continua no ponto percentual porque a folga em votos cresce sozinha: ela é a
+       * distância vezes o total apurado, e o total só aumenta. Medido na série real da presidência
+       * de 2022 (1.689 instantes), em 9% das atualizações as duas medidas apontam para lados
+       * opostos — no começo da noite a folga foi de 11.638 para 19.473 votos enquanto a distância
+       * caía de 19,8 para 13,8 pontos. Tirar a direção dos votos deixaria a seta verde,
+       * anunciando que a vantagem abriu, justamente quando a disputa estava apertando.
+       *
+       * O gatilho é um voto de diferença, e não um milésimo de ponto: com o limiar em pp, uma
+       * disputa decidida em unidades de voto nunca chegava a acender o selo.
        */
       const variou = folga - antesFolga;
-      /*
-       * O número é a distância, a seta é o que ela fez.
-       *
-       * Mostrar só a variação respondia "mexeu quanto?", que é a pergunta menor: entre duas
-       * leituras ela é sempre um décimo de nada e não diz se a disputa está apertada. O que
-       * interessa é a distância em si — "está 0,42 ponto à frente do segundo" —, e a seta ao lado
-       * dela diz se essa distância abriu ou encurtou desde a leitura anterior.
-       */
       // uma disputa com centenas de nomes se decide em milésimos: duas casas virariam "0,00"
       const dist = Math.abs(folga);
       const casas = dist < 0.01 ? 3 : 2;
       const pp = dist.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
+      const votos = Math.abs(folgaVotos);
+      const votosTexto = votos.toLocaleString('pt-BR');
       const quem = abaixo ? `sobre o ${lugar + 1}º` : `para o ${lugar - 1}º`;
       movimentos.set(chave, {
         dir: variou > 0 ? 1 : -1,
-        texto: `${pp} pp`,
-        titulo: `${abaixo ? 'Vantagem' : 'Distância'} ${quem}: ${pp} ponto${pp === '1,00' ? '' : 's'} `
-          + `percentua${pp === '1,00' ? 'l' : 'is'} — ${variou > 0 ? 'abriu' : 'encurtou'} desde a última atualização`,
+        texto: `${votosTexto} voto${votos === 1 ? '' : 's'}`,
+        titulo: `${abaixo ? 'Vantagem' : 'Distância'} ${quem}: ${votosTexto} voto${votos === 1 ? '' : 's'} `
+          + `(${pp} pp) — a distância ${variou > 0 ? 'abriu' : 'encurtou'} desde a última atualização`,
       });
     }
     posicaoAnterior.set(chave, lugar);
     folgaAnterior.set(chave, folga);
+    folgaVotosAnterior.set(chave, folgaVotos);
   });
 }
 
@@ -217,16 +228,28 @@ function corrida(office: Office, race: Race | undefined): string {
 /**
  * A presidência contada dentro do estado.
  *
- * Os votos vêm do mesmo arquivo que pinta o mapa municipal, somados por candidatura; a
- * porcentagem é sobre o total nominal do estado, e não sobre os válidos nacionais — dizer "8,7%"
- * aqui com o denominador do país seria inventar um número que não existe.
+ * Primeiro o arquivo que o TSE publica para aquele estado; a soma município a município só quando
+ * ele não existe.
+ *
+ * A soma municipal era o único caminho antes de o arquivo por UF ser coletado, e tinha dois
+ * defeitos que só apareciam em noite de apuração. Ela depende de milhares de arquivos — 853 em
+ * Minas, 5.570 no país — e, enquanto eles não chegam todos, o que a tela mostra é um subtotal do
+ * estado com cara de total. Ninguém percebe um subtotal olhando de longe. O arquivo por UF chega
+ * inteiro na primeira leitura e é o próprio TSE dizendo quanto cada candidatura fez ali.
+ *
+ * A porcentagem é sobre o total do estado, e não sobre os válidos nacionais — dizer "8,7%" aqui
+ * com o denominador do país seria inventar um número que não existe.
  */
 function presidenciaNoEstado(race: Race | undefined): string {
-  if (!presidenteNoEstado.length) {
+  const doTse = snap?.presidentUf?.candidates ?? [];
+  const lista = doTse.length
+    ? doTse.map(c => ({ numero: c.number, nome: c.name, partido: c.party, cor: c.color, votos: c.votes }))
+    : presidenteNoEstado;
+  if (!lista.length) {
     return `<p class="vazio">Aguardando os resultados de ${esc(stateName(UF))}.</p>`;
   }
-  const total = presidenteNoEstado.reduce((t, c) => t + c.votos, 0) || 1;
-  const ordem = presidenteNoEstado.slice(0, 3);
+  const total = lista.reduce((t, c) => t + c.votos, 0) || 1;
+  const ordem = lista.slice(0, 3);
   const dentro = (ordem[0].votos / total) * 100 > 50 ? 1 : 2;
   return `<ol class="nomes">${ordem.map((c, i) => {
     const fora = i >= dentro;
@@ -442,7 +465,17 @@ async function main() {
     for (const { key } of CORRIDAS) {
       const secao = palco.querySelector<HTMLElement>(`.corridas section[data-c="${key}"]`)!;
       const race = snap?.races?.[key];
-      secao.querySelector('.ap')!.textContent = race ? `${fmtPercent(race.countedPercent, 1)} apurado` : '—';
+      /*
+       * Com o alternador em MG, o percentual apurado também é o de MG.
+       *
+       * Ele vinha sempre do arquivo nacional: a lista de candidaturas trocava para o estado e o
+       * cabeçalho continuava dizendo quanto o país tinha apurado. Na simulação isso não aparece,
+       * porque os dois andam juntos — 34,008% no Brasil contra 34,003% em Minas, que viram o mesmo
+       * "34,0%" na tela. Numa apuração real eles se descolam: cada estado totaliza no seu ritmo, e
+       * aí o cabeçalho estaria dizendo do país um número posto ao lado dos votos do estado.
+       */
+      const exibida = key === 'president' && escopoPresidente === 'UF' ? (snap?.presidentUf ?? race) : race;
+      secao.querySelector('.ap')!.textContent = exibida ? `${fmtPercent(exibida.countedPercent, 1)} apurado` : '—';
       secao.querySelector('.corpo')!.innerHTML = corrida(key, race);
       secao.querySelector('.decide')!.innerHTML = key === 'president' && escopoPresidente === 'UF'
         ? `Votos da presidência apurados em ${esc(stateName(UF))}`
