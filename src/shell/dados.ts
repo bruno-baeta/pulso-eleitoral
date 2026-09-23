@@ -8,7 +8,7 @@
  */
 import { STATES, type WireRace as Race, type Snapshot, type Turn } from '../../shared/types';
 import { rankCandidates } from '../domain/derive';
-import { SIMULADO_WINDOWS, openWindow } from '../../shared/windows';
+import { OFFICIAL_WINDOWS, SIMULADO_WINDOWS, openWindow } from '../../shared/windows';
 export { contestedSeats, seatsByParty, stateName } from '../domain/derive';
 export { esc, fmtInt, fmtPercent, fmtShortTime, fold, initials, shortVotes, titleCase } from '../domain/format';
 
@@ -16,8 +16,17 @@ export type Mode = 'official' | 'historico' | 'simulado';
 const params = new URLSearchParams(location.search);
 const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 
-/** Selection comes from the URL first, then what this browser used last. The 2022 archive is the default until 2026 results exist. */
-const requested: Mode = (['official', 'historico', 'simulado'] as const).find(m => m === (params.get('mode') || stored('pulso:mode'))) ?? 'historico';
+/**
+ * Que apuração abre quando ninguém pediu nenhuma.
+ *
+ * A URL manda; depois dela, o que este navegador usou por último. Faltando os dois, o padrão é o
+ * arquivo de 2022 — porque é a única apuração que existe hoje —, **exceto na noite da eleição**:
+ * com uma janela oficial aberta, quem chega ao Pulso quer a apuração que está acontecendo, não a
+ * de quatro anos atrás. Sem esta exceção, o site abriria em 2022 justamente em 4 de outubro.
+ */
+const escolhido = params.get('mode') || stored('pulso:mode');
+const padrao: Mode = openWindow(OFFICIAL_WINDOWS) ? 'official' : 'historico';
+const requested: Mode = (['official', 'historico', 'simulado'] as const).find(m => m === escolhido) ?? padrao;
 /**
  * The TSE simulation is only collected inside its test windows, but the recordings stay available:
  * outside a window the view opens on the last recorded session (replay), never requesting the TSE.
@@ -25,7 +34,16 @@ const requested: Mode = (['official', 'historico', 'simulado'] as const).find(m 
 export const MODE: Mode = requested;
 const ufParam = (params.get('uf') || stored('pulso:uf') || 'MG').toUpperCase();
 export const UF = STATES.some(s => s.uf === ufParam) ? ufParam : 'MG';
-export const TURN: Turn = (params.get('turn') || stored('pulso:turn')) === '2' ? 2 : 1;
+/*
+ * O turno segue a mesma regra do modo: pedido primeiro, janela aberta depois.
+ *
+ * Em 25 de outubro a janela oficial é a do segundo turno, e abrir no primeiro mostraria uma
+ * apuração encerrada três semanas antes enquanto a de verdade acontece.
+ */
+const turnoPedido = params.get('turn') || stored('pulso:turn');
+export const TURN: Turn = turnoPedido === '2' ? 2
+  : turnoPedido === '1' ? 1
+  : (openWindow(OFFICIAL_WINDOWS)?.turn ?? 1);
 /** Election year of the selected source; the Senate renews one seat per UF in 2022 and two in 2026. */
 export const YEAR = MODE === 'historico' ? 2022 : 2026;
 

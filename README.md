@@ -35,6 +35,23 @@ http://127.0.0.1:5173/?mode=historico&uf=MG&turn=1
 | `uf` | sigla do estado (`MG`, `SP`, …) |
 | `turn` | `1` ou `2` |
 
+Sem parâmetro nenhum, abre em 2022 — e, nas noites de 4 e 25 de outubro de 2026, na apuração que
+está acontecendo.
+
+### Na primeira vez que rodar
+
+**O repositório não vem com resultado nenhum.** Nada de apuração antiga, nada de simulação: a pasta
+`data/` não é versionada. O que vem junto é só a malha de municípios do IBGE (1,1 MB), que é
+geografia, e as imagens deste README.
+
+Então, na primeira execução, as telas ficam alguns segundos vazias enquanto o coletor busca os
+arquivos de 2022 no TSE — e o mapa do Território leva mais, porque são centenas de arquivos, um por
+município. A partir daí tudo fica gravado em `data/` e a abertura é imediata.
+
+> O TSE limita 100 requisições por segundo por IP e bloqueia quem passa disso. Se as telas ficarem
+> presas em "Carregando os arquivos de 2022", teste `curl -I https://resultados.tse.jus.br/` — um
+> 403 ou um timeout é bloqueio de IP, e ele costuma expirar em algumas horas.
+
 Produção:
 
 ```bash
