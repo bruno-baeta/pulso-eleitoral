@@ -205,6 +205,14 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     + `<button aria-label="Fechar">✕</button></header>`
     + `<div class="estado"></div>`
     + `<div class="soma"></div>`
+    /*
+     * A carga no meio da folha, não como frase no topo.
+     *
+     * "Carregando municípios · 312 de 853" era texto miúdo acima de uma tabela vazia: dizia o
+     * mesmo que uma barra diz de relance, e ocupava a linha onde depois aparece outra coisa. A
+     * barra fica no lugar da tabela enquanto não há tabela, e some quando a primeira cidade chega.
+     */
+    + `<div class="carga" hidden><div class="trilho"><i></i></div><span></span></div>`
     + `<div class="rolo"><table><colgroup><col style="width:7%"><col style="width:31%">`
     + `<col style="width:14%"><col style="width:12%"><col style="width:14%">`
     + `<col style="width:11%"><col style="width:10%"></colgroup>`
@@ -222,6 +230,29 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   const estado = folha.querySelector('.estado') as HTMLElement;
   const soma = folha.querySelector('.soma') as HTMLElement;
   const espalho = folha.querySelector('.espalho') as HTMLElement;
+  const carga = folha.querySelector('.carga') as HTMLElement;
+  const trilho = folha.querySelector('.carga i') as HTMLElement;
+  const cargaTexto = folha.querySelector('.carga span') as HTMLElement;
+  const rolo = folha.querySelector('.rolo') as HTMLElement;
+
+  /** Mostra a barra no lugar da tabela, ou a esconde e devolve a tabela. */
+  const mostrarCarga = (feitas: number, total: number, recado = '') => {
+    carga.hidden = false;
+    rolo.hidden = true;
+    /*
+     * Sem total, a largura inline sai de cena.
+     *
+     * Ela vence a regra da classe indeterminada, que é onde a largura do vaivém mora: com
+     * `width: 0%` inline a barra existia, animava e não aparecia — trilho de 420px com preenchimento
+     * de zero.
+     */
+    const indefinida = total <= 0;
+    if (indefinida) trilho.style.removeProperty('width');
+    else trilho.style.width = `${Math.min(100, feitas / total * 100)}%`;
+    carga.classList.toggle('indefinida', indefinida);
+    cargaTexto.textContent = recado || (total > 0 ? `${fmtInt(feitas)} de ${fmtInt(total)} municípios` : 'Falando com o TSE');
+  };
+  const esconderCarga = () => { carga.hidden = true; rolo.hidden = false; };
   const mais = folha.querySelector('.mais') as HTMLElement;
 
   type Linha = {
@@ -297,7 +328,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
       d = r.ok ? await r.json() as Municipal : null;
     } catch { d = null; }
     if (fechada) return;
-    if (!d) { estado.textContent = 'Não foi possível carregar os municípios agora. Tentando de novo…'; relogio = window.setTimeout(carregar, 3000); return; }
+    if (!d) { mostrarCarga(0, 0, 'Sem resposta do servidor · tentando de novo'); relogio = window.setTimeout(carregar, 3000); return; }
     linhas = (d.linhas || []).map(([nome, uf, votos, validos, pos, ht, st, ts]) => {
       const cidade = titulo(nome);
       return { nome: cidade, uf, busca: dobrar(cidade), votos, validos, pos, ht, st, ts };
@@ -311,12 +342,20 @@ export function abrirCandidato(o: CandidatoOpcoes) {
      * para mostrar. Se ainda faltam cidades mas já há o que ver, isso é dito no rodapé, junto da
      * contagem — a lista não pode passar por completa quando não está.
      */
-    // Reproduzindo um instante em que nada tinha sido publicado, a tabela em branco precisa dizer
-    // por que está em branco — senão parece falha de carregamento.
-    estado.textContent = at != null && !linhas.length ? 'Nenhuma cidade tinha publicado resultado neste instante da apuração.'
-      : pronto || linhas.length ? ''
-      : d.total ? `Carregando municípios · ${fmtInt(d.loaded ?? 0)} de ${fmtInt(d.total)}`
-      : (d.message || 'Carregando municípios…');
+    /*
+     * A barra só existe enquanto não há uma linha sequer.
+     *
+     * Chegada a primeira cidade, quem manda é a tabela: o que ainda falta é assunto do rodapé, não
+     * motivo para esconder o que já dá para ler.
+     */
+    if (linhas.length) { esconderCarga(); estado.textContent = ''; }
+    else if (at != null) {
+      // Reproduzindo um instante em que nada tinha sido publicado, a tabela em branco precisa
+      // dizer por que está em branco — e isso é um fato, não uma espera: não leva barra.
+      esconderCarga();
+      estado.textContent = 'Nenhuma cidade tinha publicado resultado neste instante da apuração.';
+    } else if (pronto) { esconderCarga(); estado.textContent = ''; }
+    else { estado.textContent = ''; mostrarCarga(d.loaded ?? 0, d.total ?? 0, d.total ? '' : d.message || ''); }
     /*
      * O que interessa é quantas cidades já têm resultado, não quantas foram buscadas.
      *
@@ -381,7 +420,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   });
 
   document.body.appendChild(fundo);
-  estado.textContent = 'Carregando municípios…';
+  mostrarCarga(0, 0);
   void carregar();
 
   /*
@@ -454,6 +493,24 @@ const CSS = `
   .tbl-folha header button:hover { color: #f6f3ec; }
 
   .tbl-folha .rolo { flex: 1; min-height: 0; overflow: auto; }
+  .tbl-folha .rolo[hidden] { display: none; }
+
+  /* A carga ocupa o corpo da folha enquanto nao ha tabela, centrada. */
+  .tbl-folha .carga { flex: 1; min-height: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.6vh; }
+  .tbl-folha .carga[hidden] { display: none; }
+  .tbl-folha .carga .trilho { width: min(420px, 40vw); height: 4px; border-radius: 2px;
+    background: #1c211f; overflow: hidden; }
+  .tbl-folha .carga i { display: block; height: 100%; width: 0; border-radius: 2px;
+    background: #e8c877; transition: width .4s ease; }
+  .tbl-folha .carga span { font-size: clamp(10px, .8vw, 16px); color: #6a6863;
+    font-variant-numeric: tabular-nums; }
+  /* Sem total nao ha fracao a mostrar: a barra vira um vaivem, que diz "esperando" sem mentir
+     um progresso que ninguem mediu. */
+  .tbl-folha .carga.indefinida i { width: 35%; animation: tbl-vaivem 1.5s ease-in-out infinite; }
+  /* transform, nao margin: a margem reflui o trilho a cada quadro e a barra saia de vista nas
+     pontas; com translate ela atravessa o trilho inteiro e fica visivel quase o tempo todo. */
+  @keyframes tbl-vaivem { 0% { transform: translateX(-100%); } 100% { transform: translateX(286%); } }
   .tbl-folha table { width: 100%; table-layout: fixed; border-collapse: collapse;
     font-size: clamp(11px, .95vw, 19px); }
   .tbl-folha th { position: sticky; top: 0; z-index: 1; background: #0a0c0b; text-align: left;
