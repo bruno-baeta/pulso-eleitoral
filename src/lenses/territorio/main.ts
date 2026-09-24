@@ -535,18 +535,15 @@ async function main() {
      * bloco mostrou 76,6% ao lado de um painel em 84,0% — dez por cento das cidades, e as mais
      * atrasadas. Sem a cobertura escrita, a diferença parece erro em vez de recorte.
      */
-    const t = data.totais;
-    const publicadas = data.cities.reduce((n, c) => n + (c.vv > 0 ? 1 : 0), 0);
-    soma.innerHTML = !t || !t.secoesTotais ? '' :
-      `<div class="soma-t">Somando <b>${fmtInt(t.cidades)}</b> de ${fmtInt(publicadas)} cidades apuradas</div>`
-      + `<dl>`
-      + `<div><dt>Nominais</dt><dd>${fmtInt(t.nominais)}</dd></div>`
-      + `<div><dt>Brancos</dt><dd>${fmtInt(t.brancos)}</dd></div>`
-      + `<div><dt>Nulos</dt><dd>${fmtInt(t.nulos)}</dd></div>`
-      + `<div><dt>Total de votos</dt><dd>${fmtInt(t.total)}</dd></div>`
-      + `<div class="ap"><dt>Seções nessas cidades</dt><dd>${fmtPercent(t.secoes / t.secoesTotais * 100, 1)}</dd></div>`
-      + `</dl>`
-      + `<div class="soma-p">${fmtInt(t.secoes)} de ${fmtInt(t.secoesTotais)} seções totalizadas</div>`;
+    /*
+     * A tabela de conferência saiu do alto do mapa.
+     *
+     * Ela somava votos e seções das cidades já buscadas. Como o denominador eram essas mesmas
+     * cidades, a porcentagem vivia perto de 100% e não dizia nada sobre o estado — 98,48% ao lado
+     * de um painel em 7,0%. O estado de cada cidade está na folha de cidades, linha a linha, que é
+     * onde ele é verdadeiro.
+     */
+    soma.innerHTML = '';
 
     if (!data.cities.length) { legend.innerHTML = src; return; }
     if (!sel) {

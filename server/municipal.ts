@@ -75,11 +75,24 @@ export interface TotaisMunicipais {
    * entrando na conta.
    */
   semTotais: number;
+  /**
+   * As seções do estado inteiro, e quantas já foram totalizadas — do arquivo de andamento.
+   *
+   * A porcentagem saía de `secoes/secoesTotais`, que são a soma **das cidades já buscadas**. Com 48
+   * das 853 cidades de Minas publicadas, isso dava "98,48% apurado pelas cidades" ao lado de um
+   * painel em 7,0%: o número era a fatia apurada dentro daquelas 48, não do estado. Um denominador
+   * que cresce junto com o numerador nunca sai de perto de 100%.
+   *
+   * O arquivo de andamento da UF traz todas as cidades num instante só, e é dele que estes dois
+   * saem. Zero quando ele ainda não foi lido — aí não há porcentagem a mostrar.
+   */
+  secoesEstado: number;
+  secoesApuradasEstado: number;
 }
 
 export type MunicipalResponse = MunicipalPayload | ({ unchanged: true } & Pick<MunicipalPayload, 'status' | 'message' | 'loaded' | 'total' | 'version'>);
 
-/** O que a folha de cidades desenha, e nada mais: [nome, uf, votos, válidos na cidade, colocação]. */
+/** O que a folha de cidades desenha, e nada mais. */
 export interface CandidaturaMunicipal {
   status: MunicipalPayload['status'];
   message: string;
@@ -102,7 +115,8 @@ export interface CandidaturaMunicipal {
    */
   totais: TotaisMunicipais;
   numero: string;
-  linhas: [string, string, number, number, number][];
+  /** [nome, uf, votos, válidos na cidade, colocação, hora da publicação, seções apuradas, seções da cidade] */
+  linhas: [string, string, number, number, number, string, number, number][];
 }
 
 interface MunRef { uf: string; cd: string; cdi: string; nm: string; capital: boolean }
@@ -149,7 +163,15 @@ interface Job {
   body?: { version: number; namesAt: number; payload: MunicipalPayload };
 }
 
-export interface AbCity { stamp: string; ht: string; te: number; finished: boolean }
+/**
+ * Uma cidade no arquivo de andamento da UF.
+ *
+ * `st` e `ts` são as seções totalizadas e o total delas **naquela cidade**. Vêm daqui, e não do
+ * arquivo de cada município, porque este arquivo traz todas as cidades do estado num instante só:
+ * é o que permite dizer quanto do estado está apurado sem depender de quais cidades já foram
+ * buscadas uma a uma.
+ */
+export interface AbCity { stamp: string; ht: string; te: number; st: number; ts: number; finished: boolean }
 const KEEPALIVE = 90_000;
 /** No view has asked for anything for this long: the server is free to fetch ahead. */
 const IDLE_AFTER = 45_000;
@@ -233,6 +255,7 @@ export function parseAb(raw: unknown, election: string): { sourceAt: string | nu
     cities.set(str(a.cdabr).padStart(5, '0'), {
       stamp: `${str(a.dt)} ${str(a.ht)}|${str(sections.st)}|${str(a.and)}`, ht: str(a.ht),
       te: numeric(object(a.e).te) || numeric(sections.ts), finished: a.and === 'f',
+      st: numeric(sections.st), ts: numeric(sections.ts),
     });
   }
   return { sourceAt: tseTime(root.dg, root.hg), cities };
@@ -450,7 +473,19 @@ export class MunicipalService {
 
   /** Soma toda cidade publicada. A que não trouxe o bloco de totais conta em `semTotais`. */
   private somar(job: Job | undefined, linhas?: Map<string, Row>): TotaisMunicipais {
-    const t: TotaisMunicipais = { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0, desde: '', semTotais: 0 };
+    const t: TotaisMunicipais = { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0, desde: '', semTotais: 0, secoesEstado: 0, secoesApuradasEstado: 0 };
+    /*
+     * O estado inteiro, do andamento: toda cidade entra, tenha sido buscada ou não.
+     *
+     * É o que torna a porcentagem comparável com a do painel. As cidades buscadas dizem os votos;
+     * o andamento diz o tamanho do todo.
+     */
+    for (const m of job?.muns ?? []) {
+      const c = job?.stamps.get(`${m.uf}${m.cd}`);
+      if (!c?.ts) continue;
+      t.secoesEstado += c.ts;
+      t.secoesApuradasEstado += c.st;
+    }
     for (const [cdi, linha] of linhas ?? job?.rows ?? []) {
       if (linha.vv <= 0) continue;
       const m = job?.muns.find(x => x.cdi === cdi);
@@ -606,7 +641,7 @@ export class MunicipalService {
       try {
         const file = JSON.parse(await readFile(path, 'utf8')) as {
           c: [string, number][]; m: [string, string, string, number, number[]][]; t?: number[][];
-          k?: [string, string, string, number, number][]; b?: [string, string][];
+          k?: [string, string, string, number, number, number?, number?][]; b?: [string, string][];
         };
         job.muns = file.m.map(([cdi, nm, uf]) => ({ cdi, nm, uf, cd: '', capital: false }));
         file.m.forEach(([cdi, , , vv, pairs], i) => {
@@ -621,7 +656,7 @@ export class MunicipalService {
           job.rows.set(cdi, { vv, cand, vb, vn, tv, st, ts, esq });
         });
         // Os carimbos e as buscas voltam junto: é o que faz o restart retomar em vez de recomeçar.
-        for (const [k, stamp, ht, te, finished] of file.k ?? []) job.stamps.set(k, { stamp, ht, te, finished: !!finished });
+        for (const [k, stamp, ht, te, finished, st, ts] of file.k ?? []) job.stamps.set(k, { stamp, ht, te, finished: !!finished, st: st ?? 0, ts: ts ?? 0 });
         for (const [cdi, stamp] of file.b ?? []) job.fetched.set(cdi, stamp);
         job.version = 1;
         job.salvo = { version: job.version, em: Date.now() };
@@ -659,7 +694,7 @@ export class MunicipalService {
      *
      * Só ao vivo: o histórico não tem andamento.
      */
-    const carimbos = [...job.stamps].map(([k, c]) => [k, c.stamp, c.ht, c.te, c.finished ? 1 : 0]);
+    const carimbos = [...job.stamps].map(([k, c]) => [k, c.stamp, c.ht, c.te, c.finished ? 1 : 0, c.st, c.ts]);
     const buscados = [...job.fetched];
     await mkdir(dirname(path), { recursive: true });
     await writeFile(`${path}.tmp`, JSON.stringify({ c: payload.c, m: payload.m, t: totais, k: carimbos, b: buscados }));
@@ -804,7 +839,7 @@ export class MunicipalService {
    */
   async porCandidatura(mode: Mode, uf: string, turn: Turn, office: Office, numero: string, at?: number): Promise<CandidaturaMunicipal> {
     const bruto = await this.get(mode, uf, turn, office, undefined, at);
-    if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado: 0, totais: { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0, desde: '', semTotais: 0 }, numero, linhas: [] };
+    if ('unchanged' in bruto) return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado: 0, totais: { cidades: 0, nominais: 0, brancos: 0, nulos: 0, total: 0, secoes: 0, secoesTotais: 0, desde: '', semTotais: 0, secoesEstado: 0, secoesApuradasEstado: 0 }, numero, linhas: [] };
 
     /*
      * Cidade que já publicou e não deu voto nenhum também entra, com zero.
@@ -817,7 +852,16 @@ export class MunicipalService {
      */
     const linhas: CandidaturaMunicipal['linhas'] = [];
     const indice = bruto.c.findIndex(([n]) => n === numero);
-    for (const [, nome, ufCidade, validos, pares] of bruto.m) {
+    /*
+     * A hora e o apurado de cada cidade vêm do andamento da UF, não do arquivo dela.
+     *
+     * O andamento traz todas as cidades num instante só, inclusive as que ainda não foram
+     * buscadas uma a uma — é a única fonte que sabe dizer, linha a linha, de quando é aquele
+     * número e quanto daquela cidade já foi totalizado.
+     */
+    const job = this.jobs.get(`${mode}:${turn}:${this.area(office, uf)}:${office}`);
+    const porCdi = new Map((job?.muns ?? []).map(m => [m.cdi, job!.stamps.get(`${m.uf}${m.cd}`)]));
+    for (const [cdi, nome, ufCidade, validos, pares] of bruto.m) {
       if (validos <= 0) continue;                       // esta cidade ainda não publicou
       let votos = 0, pos = 0;
       if (indice >= 0) {
@@ -828,7 +872,8 @@ export class MunicipalService {
           break;
         }
       }
-      linhas.push([nome, ufCidade, votos, validos, pos]);
+      const c = porCdi.get(cdi);
+      linhas.push([nome, ufCidade, votos, validos, pos, c?.ht ?? '', c?.st ?? 0, c?.ts ?? 0]);
     }
     linhas.sort((a, b) => b[2] - a[2] || a[0].localeCompare(b[0], 'pt-BR'));
     const cidadesComResultado = bruto.m.reduce((t, [, , , vv]) => t + (vv > 0 ? 1 : 0), 0);

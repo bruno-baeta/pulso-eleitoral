@@ -204,10 +204,12 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     + `<button aria-label="Fechar">✕</button></header>`
     + `<div class="estado"></div>`
     + `<div class="soma"></div>`
-    + `<div class="rolo"><table><colgroup><col style="width:9%"><col style="width:45%">`
-    + `<col style="width:16%"><col style="width:15%"><col style="width:15%"></colgroup>`
+    + `<div class="rolo"><table><colgroup><col style="width:7%"><col style="width:31%">`
+    + `<col style="width:14%"><col style="width:12%"><col style="width:14%">`
+    + `<col style="width:11%"><col style="width:10%"></colgroup>`
     + `<thead><tr><th>#</th><th>Cidade</th><th class="r">Votos</th><th class="r">% válidos</th>`
-    + `<th class="r">Posição na cidade</th></tr></thead><tbody></tbody></table></div>`
+    + `<th class="r">Posição na cidade</th><th class="r">Apurado na cidade</th>`
+    + `<th class="r">Atualizado</th></tr></thead><tbody></tbody></table></div>`
     // A conferência é rodapé fixo, não fim de lista: dentro da rolagem ela ia embora na primeira
     // rolada, e é justamente a linha que diz se a lista fecha com o total da candidatura.
     + `<div class="mais"></div>`
@@ -220,7 +222,11 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   const soma = folha.querySelector('.soma') as HTMLElement;
   const mais = folha.querySelector('.mais') as HTMLElement;
 
-  type Linha = { nome: string; uf: string; busca: string; votos: number; validos: number; pos: number };
+  type Linha = {
+    nome: string; uf: string; busca: string; votos: number; validos: number; pos: number;
+    /** Hora em que o TSE publicou esta cidade, e o quanto dela já está totalizado. */
+    ht: string; st: number; ts: number;
+  };
   let linhas: Linha[] = [], quantas = 200, relogio = 0, fechada = false, vazio = '', conferencia = '';
 
   const desenhar = () => {
@@ -229,9 +235,26 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     corpo.innerHTML = lista.slice(0, quantas).map(({ r, i }) =>
       `<tr><td class="n">${i + 1}º</td><td>${esc(r.nome)} <span class="n">(${esc(r.uf)})</span></td>`
       + `<td class="r">${fmtInt(r.votos)}</td>`
-      + `<td class="r">${r.validos && r.votos ? fmtPct(r.votos / r.validos * 100, 1) : '—'}</td>`
-      + `<td class="r">${r.pos ? `<span class="pos" style="--c:${esc(o.cor)}">${r.pos}º</span>` : '<span class="n">—</span>'}</td></tr>`).join('')
-      || (linhas.length ? `<tr><td colspan="5" class="n">Nenhuma cidade encontrada.</td></tr>` : '');
+      /*
+       * Candidatura com mais votos que os válidos da cidade não rende porcentagem.
+       *
+       * Acontece no simulado: conferido na fonte em 24/09/2026, o arquivo de Aracaju trazia
+       * `v.vv` 61.309 com as candidaturas somando 230.229, e a coluna mostrava "263,3% dos
+       * válidos". Número impossível na tela é pior que número ausente — a fonte é que está
+       * inconsistente, e inventar um teto de 100% esconderia isso.
+       */
+      + `<td class="r">${r.validos && r.votos && r.votos <= r.validos ? fmtPct(r.votos / r.validos * 100, 1) : '<span class="n">—</span>'}</td>`
+      + `<td class="r">${r.pos ? `<span class="pos" style="--c:${esc(o.cor)}">${r.pos}º</span>` : '<span class="n">—</span>'}</td>`
+      /*
+       * O estado de cada cidade, na linha dela.
+       *
+       * É a pergunta que o bloco de totais tentava responder no agregado e errava: aqui ela tem
+       * resposta certa, porque cada cidade tem a sua hora e a sua fração. Vêm do arquivo de
+       * andamento da UF, que traz todas as cidades num instante só.
+       */
+      + `<td class="r">${r.ts ? fmtPct(r.st / r.ts * 100, 1) : '<span class="n">—</span>'}</td>`
+      + `<td class="r">${r.ht ? esc(r.ht.slice(0, 5)) : '<span class="n">—</span>'}</td></tr>`).join('')
+      || (linhas.length ? `<tr><td colspan="7" class="n">Nenhuma cidade encontrada.</td></tr>` : '');
     /*
      * Uma frase, não três coladas por pontos.
      *
@@ -248,9 +271,10 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     if (fechada) return;
     type Municipal = {
       status: string; message?: string; loaded?: number; total?: number; cidadesComResultado?: number;
-      totais?: { cidades: number; nominais: number; brancos: number; nulos: number; total: number; secoes: number; secoesTotais: number };
+      totais?: { cidades: number; nominais: number; brancos: number; nulos: number; total: number; secoes: number; secoesTotais: number; secoesEstado: number; secoesApuradasEstado: number };
       /** [nome, uf, votos, válidos na cidade, colocação] — já filtrado e ordenado pelo servidor. */
-      linhas: [string, string, number, number, number][];
+      /** [nome, uf, votos, válidos, colocação, hora da publicação, seções apuradas, seções da cidade] */
+      linhas: [string, string, number, number, number, string, number, number][];
     };
     let d: Municipal | null = null;
     /*
@@ -272,9 +296,9 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     } catch { d = null; }
     if (fechada) return;
     if (!d) { estado.textContent = 'Não foi possível carregar os municípios agora. Tentando de novo…'; relogio = window.setTimeout(carregar, 3000); return; }
-    linhas = (d.linhas || []).map(([nome, uf, votos, validos, pos]) => {
+    linhas = (d.linhas || []).map(([nome, uf, votos, validos, pos, ht, st, ts]) => {
       const cidade = titulo(nome);
-      return { nome: cidade, uf, busca: dobrar(cidade), votos, validos, pos };
+      return { nome: cidade, uf, busca: dobrar(cidade), votos, validos, pos, ht, st, ts };
     });
     const pronto = d.status === 'ready';
     /*
@@ -316,22 +340,17 @@ export function abrirCandidato(o: CandidatoOpcoes) {
      * percentual apurado e as seções somadas dizem outro, a diferença fica visível em vez de
      * suposta.
      */
-    const t = d.totais;
-    soma.innerHTML = !t || !t.secoesTotais ? '' :
-      `<div class="soma-t">Somando ${fmtInt(t.cidades)} de ${fmtInt(d.cidadesComResultado ?? 0)} cidades publicadas</div>`
-      + `<dl>`
-      + `<div><dt>Votos nominais</dt><dd>${fmtInt(t.nominais)}</dd></div>`
-      + `<div><dt>Brancos</dt><dd>${fmtInt(t.brancos)}</dd></div>`
-      + `<div><dt>Nulos</dt><dd>${fmtInt(t.nulos)}</dd></div>`
-      + `<div><dt>Total de votos</dt><dd>${fmtInt(t.total)}</dd></div>`
-      + `<div><dt>Seções totalizadas</dt><dd>${fmtInt(t.secoes)} de ${fmtInt(t.secoesTotais)}</dd></div>`
-      + `<div class="ap"><dt>Apurado pelas cidades</dt><dd>${fmtPct(t.secoes / t.secoesTotais * 100, 2)}</dd></div>`
-      + `</dl>`;
+    /*
+     * O bloco de totais das cidades saiu.
+     *
+     * Ele somava votos e seções das cidades já buscadas e mostrava isso como porcentagem: com 48
+     * das 853 cidades de Minas publicadas, dava "98,48% apurado" ao lado de um painel em 7,0%. Um
+     * denominador que cresce junto com o numerador nunca sai de perto de 100%, e o rótulo fazia o
+     * número passar por apuração do estado. O que cada cidade tem agora está na linha dela.
+     */
+    soma.innerHTML = '';
 
-    const somado = linhas.reduce((t, r) => t + r.votos, 0);
-    conferencia = !o.votos ? `${fmtInt(somado)} votos em ${fmtInt(linhas.length)} cidades`
-      : somado >= o.votos ? `Os ${fmtInt(somado)} votos da candidatura estão todos nesta lista`
-      : `${fmtInt(somado)} dos ${fmtInt(o.votos)} votos da candidatura · o resto está em cidades que ainda não publicaram`;
+    conferencia = '';
     desenhar();
     // Reproduzindo, o instante não anda sozinho: quem repede é o transporte.
     if (!pronto && at == null) relogio = window.setTimeout(carregar, 2500);
