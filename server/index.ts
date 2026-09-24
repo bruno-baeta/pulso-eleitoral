@@ -27,6 +27,8 @@ const municipal = new MunicipalService(collector.transport, {
   race: (mode, uf, turn, office) => collector.fullRace(mode, uf, turn, office),
   touch: (mode, uf, turn) => collector.touch(mode, uf, turn),
   live: () => collector.liveContexts(),
+  foco: () => collector.contextosEmFoco(),
+  eleitorado: (mode, uf, turn) => collector.eleitoradoDe(mode, uf, turn),
   session: mode => String(collector.sessionOf(mode)),
 });
 // Idle time is when the archive's per-municipality files get fetched ahead (see municipal.ts).

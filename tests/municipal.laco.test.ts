@@ -28,6 +28,8 @@ function hooks(extra: Partial<MunicipalHooks> = {}): MunicipalHooks {
     race: () => undefined,
     touch: () => {},
     live: () => [],
+    foco: () => [],
+    eleitorado: () => 0,
     session: () => 'sessao-de-teste',
     ...extra,
   };
@@ -162,30 +164,116 @@ test('cidade encerrada pelo TSE não é pedida de novo', async () => {
   } finally { await fechar(); }
 });
 
-test('uma varredura de cada vez, e é a do cargo que está na tela', async () => {
+test('a rodada do estado enche os cinco cargos da mesma cidade', async () => {
   /*
-   * O defeito: cada cargo aberto virava um job, e todos varriam ao mesmo tempo dividindo a mesma
-   * faixa — o total municipal era 42 req/s e o job que enchia a tela recebia 1,5 desses 42.
+   * O defeito, medido na janela de 24/09/2026 em Minas: cada cargo tinha a sua varredura das 853
+   * cidades e uma andava por vez, então eles enchiam em fila — a gravação municipal começou às
+   * 14:00:36 no governador, 14:14:15 na presidência, 14:16:21 no senado e 14:20:19 no estadual.
+   *
+   * A cidade é a unidade: quem foi buscado junto enche junto. O total de requisições é o mesmo, um
+   * arquivo por cidade e por cargo; o que muda é a ordem.
    */
-  const tse = tseComMinas(15, { cargos: [3, 5] });
+  const tse = tseComMinas(12, { cargos: [1, 3, 5, 6, 7] });
   const { servico: s, fechar } = await servico(tse);
   try {
-    await s.get('simulado', 'MG', 1, 'senate');      // aquecido antes
-    await respirar(4);
-    await s.get('simulado', 'MG', 1, 'governor');    // este é o pedido da tela, e é o mais recente
-    const payload = await ateFechar(s, 'simulado', 'MG', 1, 'governor');
+    await ateFechar(s, 'simulado', 'MG', 1, 'governor');
+    for (const office of ['president', 'governor', 'senate', 'federal', 'state'] as const) {
+      assert.equal(cidades(await s.get('simulado', 'MG', 1, office)), 12, `${office} tem as doze cidades`);
+    }
+  } finally { await fechar(); }
+});
 
-    assert.equal('status' in payload ? payload.status : '', 'ready', 'o cargo da tela precisa fechar');
-    assert.equal(cidades(payload), 15);
+test('os cinco cargos gravam o instante da mesma rodada', async () => {
+  /*
+   * É o que a tabela de cidades lê quando o player está reproduzindo. Antes cada cargo gravava
+   * quando lhe chegava a vez, minutos depois dos outros, e abrir uma candidatura no começo da
+   * reprodução devolvia "Nenhuma cidade tinha publicado resultado neste instante" — uma afirmação
+   * sobre o TSE para dizer um fato nosso: as cidades estavam publicadas, nós não as tínhamos
+   * buscado ainda.
+   */
+  const tse = tseComMinas(8, { cargos: [1, 3, 5, 6, 7] });
+  const { servico: s, fechar } = await servico(tse);
+  try {
+    await ateFechar(s, 'simulado', 'MG', 1, 'governor');
+    await s.encerrar();                       // descarrega os instantes pendentes
+    const instante = Date.now();
+    for (const office of ['president', 'governor', 'senate', 'federal', 'state'] as const) {
+      const gravado = await s.get('simulado', 'MG', 1, office, undefined, instante);
+      assert.ok(cidades(gravado) > 0, `${office} precisa existir na gravação deste instante`);
+    }
+  } finally { await fechar(); }
+});
 
-    /*
-     * A serialização é cooperativa: um cargo que já estava dentro de uma varredura termina a volta
-     * antes de ceder a vez — `vezDeVarrer` é consultado entre voltas, não no meio de uma. O que não
-     * pode acontecer é o cargo da tela ficar sem faixa nenhuma, que era o defeito: o job que enchia
-     * a tela recebia 1,5 das 42 requisições por segundo.
-     */
-    const semNinguemOlhando = await s.get('simulado', 'MG', 1, 'federal');
-    assert.ok(cidades(semNinguemOlhando) < 15, 'cargo sem ninguém olhando não corre na frente do que está na tela');
+test('sem nada a buscar no estado da tela, a folga vai para o de maior eleitorado', async () => {
+  /*
+   * A ordem pedida: o estado da TV primeiro e sempre; quando não há mais o que buscar nele, os
+   * outros, do maior eleitorado para o menor. O eleitorado sai do arquivo do TSE, não de uma lista
+   * escrita à mão.
+   */
+  const tse = new TseFalso();
+  tse.em('/config/mun-', { corpo: configMunicipal({ SP: 5, AC: 5 }) });
+  tse.em('-ab.json', { corpo: andamento(ELEICAO, 'sp', 5) });
+  tse.em(`-c0003-e0${ELEICAO}-u.json`, url => {
+    const cd = /(?:sp|ac)(\d+)-c/.exec(url)?.[1] ?? '0';
+    return { corpo: resultadoMunicipal(ELEICAO, cd, 3, [['83', 100], ['89', 50]]) };
+  });
+  const eleitorado = (_m: Mode, uf: string) => uf === 'SP' ? 34_000_000 : 600_000;
+  const { servico: s, fechar } = await servico(tse, { eleitorado });
+  try {
+    // Os dois pedidos na mesma volta: o que decide não pode ser quem chegou primeiro.
+    await Promise.all([s.get('simulado', 'AC', 1, 'governor'), s.get('simulado', 'SP', 1, 'governor')]);
+    for (let i = 0; i < 40; i++) {
+      await respirar(6);
+      if (tse.contar('-c0003-e0') > 0) break;
+    }
+    const primeira = [...tse.pedidos.keys()].find(u => u.includes(`-c0003-e0${ELEICAO}-u.json`));
+    assert.ok(primeira, 'alguma cidade foi buscada');
+    assert.match(primeira!, /\/dados\/sp\//, `o maior eleitorado vem antes; a primeira foi ${primeira}`);
+  } finally { await fechar(); }
+});
+
+test('o estado que está na tela passa na frente de um estado maior', async () => {
+  /*
+   * O outro lado da mesma regra, e a que manda: eleitorado só ordena quem ninguém está olhando.
+   * Com o Acre na TV, é o Acre que enche primeiro, mesmo São Paulo sendo trinta vezes maior.
+   */
+  const tse = new TseFalso();
+  tse.em('/config/mun-', { corpo: configMunicipal({ SP: 5, AC: 5 }) });
+  tse.em('-ab.json', { corpo: andamento(ELEICAO, 'ac', 5) });
+  tse.em(`-c0003-e0${ELEICAO}-u.json`, url => {
+    const cd = /(?:sp|ac)(\d+)-c/.exec(url)?.[1] ?? '0';
+    return { corpo: resultadoMunicipal(ELEICAO, cd, 3, [['83', 100], ['89', 50]]) };
+  });
+  const { servico: s, fechar } = await servico(tse, {
+    eleitorado: (_m, uf) => uf === 'SP' ? 34_000_000 : 600_000,
+    foco: () => [{ mode: 'simulado', uf: 'AC', turn: 1 }],
+  });
+  try {
+    await Promise.all([s.get('simulado', 'SP', 1, 'governor'), s.get('simulado', 'AC', 1, 'governor')]);
+    for (let i = 0; i < 40; i++) {
+      await respirar(6);
+      if (tse.contar('-c0003-e0') > 0) break;
+    }
+    const primeira = [...tse.pedidos.keys()].find(u => u.includes(`-c0003-e0${ELEICAO}-u.json`));
+    assert.ok(primeira, 'alguma cidade foi buscada');
+    assert.match(primeira!, /\/dados\/ac\//, `o estado da tela vem antes; a primeira foi ${primeira}`);
+  } finally { await fechar(); }
+});
+
+test('trocar o estado da tela move a vez para o novo', async () => {
+  const tse = new TseFalso();
+  tse.em('/config/mun-', { corpo: configMunicipal({ MG: 6, SP: 6 }) });
+  tse.em('-ab.json', { corpo: andamento(ELEICAO, 'mg', 6) });
+  tse.em(`-c0003-e0${ELEICAO}-u.json`, url => {
+    const cd = /(?:mg|sp)(\d+)-c/.exec(url)?.[1] ?? '0';
+    return { corpo: resultadoMunicipal(ELEICAO, cd, 3, [['83', 100], ['89', 50]]) };
+  });
+  let naTela = 'MG';
+  const { servico: s, fechar } = await servico(tse, { foco: () => [{ mode: 'simulado', uf: naTela, turn: 1 }] });
+  try {
+    assert.equal(cidades(await ateFechar(s, 'simulado', 'MG', 1, 'governor')), 6, 'Minas fecha primeiro');
+    naTela = 'SP';                                  // a TV trocou de estado
+    assert.equal(cidades(await ateFechar(s, 'simulado', 'SP', 1, 'governor')), 6, 'e São Paulo fecha depois');
   } finally { await fechar(); }
 });
 

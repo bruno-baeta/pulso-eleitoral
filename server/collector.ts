@@ -275,6 +275,29 @@ export class Collector {
    */
   sessionOf(mode: Mode) { return mode === 'historico' ? ARCHIVE.year : this.session(mode as LiveMode); }
   /**
+   * Os estados que estão na tela de alguém agora — as abas abertas, e nada mais.
+   *
+   * `liveContexts` são os 27 que a janela manda gravar, sem ordem entre eles; estes são os que
+   * alguém está olhando. A rodada municipal precisa da diferença para buscar o estado da TV antes
+   * de qualquer outro. O `touched` de propósito não entra: quem só consultou uma rota não está
+   * assistindo, e foi essa mistura que já colocou meia dúzia de estados no ritmo de quem está.
+   */
+  contextosEmFoco() { return [...this.subs].map(s => ({ mode: s.mode, uf: s.uf, turn: s.turn })); }
+  /**
+   * O eleitorado da UF, para ordenar os estados que ninguém está olhando.
+   *
+   * Sai da disputa mais abrangente que já chegou daquele estado — governador cobre o estado
+   * inteiro, e o número é o `te` que o próprio TSE publica. Zero enquanto nada chegou, e aí o
+   * estado vai para o fim da fila: dele ainda não se sabe nem qual eleição consultar.
+   */
+  eleitoradoDe(mode: Mode, uf: string, turn: Turn): number {
+    for (const office of ['governor', 'senate', 'federal', 'state'] as Office[]) {
+      const race = this.fullRace(mode, uf, turn, office);
+      if (race?.electorate) return race.electorate;
+    }
+    return 0;
+  }
+  /**
    * The whole race (not trimmed), for candidate names.
    *
    * `scope` sobrepõe a área natural do cargo, como em `fetchRace` e `series`: sem ele a presidência

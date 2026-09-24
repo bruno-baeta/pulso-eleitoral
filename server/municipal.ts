@@ -26,6 +26,24 @@ export interface MunicipalHooks {
   /** What the collector is already recording: live contexts to keep a municipal build ready for. */
   live(): { mode: Mode; uf: string; turn: Turn }[];
   /**
+   * Os estados que estão na tela de alguém agora.
+   *
+   * `live()` são os 27 que a janela do TSE manda gravar, e entre eles não há ordem nenhuma — foi
+   * por isso que o aquecimento municipal começava por um cargo fixo de cada estado, sem saber qual
+   * estado alguém estava olhando. A rodada precisa dessa diferença: o estado da TV vem antes de
+   * qualquer outro, e os demais só recebem a folga que ele deixar.
+   */
+  foco(): { mode: Mode; uf: string; turn: Turn }[];
+  /**
+   * O eleitorado da UF, para ordenar os estados que não estão na tela.
+   *
+   * Sai do próprio arquivo do TSE — o total de eleitores da disputa —, e não de uma lista escrita
+   * à mão, que seria opinião a ser revisada a cada eleição. Estado cuja corrida ainda não chegou
+   * responde zero e vai para o fim da fila, o que é o certo: dele também não se sabe ainda qual
+   * eleição consultar.
+   */
+  eleitorado(mode: Mode, uf: string, turn: Turn): number;
+  /**
    * Qual sessão de apuração está em curso, como o gravador das corridas a nomeia.
    *
    * A gravação municipal é guardada por sessão: sem isso, a janela da tarde abriria com os números
@@ -161,7 +179,7 @@ interface Job {
    */
   pedidoEm: number;
   /** Live delta: last UF progress stamp per TSE municipality (uf+cd), the stamp each city was fetched at, and which UF files were read. */
-  stamps: Map<string, AbCity>; fetched: Map<string, string>; abSeen: Set<string>; abRotation: number; fetches: number;
+  stamps: Map<string, AbCity>; fetched: Map<string, string>; abSeen: Set<string>; fetches: number;
   /** Quando cada cidade foi lida pela última vez. Encerrada não quer dizer nunca mais (ver `encerrada`). */
   lidaEm: Map<string, number>;
   /** Cidades que mudaram desde a última linha gravada, esperando virar um instante no disco. */
@@ -192,6 +210,15 @@ interface Job {
  * buscadas uma a uma.
  */
 export interface AbCity { stamp: string; ht: string; te: number; st: number; ts: number; finished: boolean }
+
+/** Onde o TSE publica uma eleição: a configuração, o andamento por UF e o arquivo de cada cidade. */
+interface Alvo {
+  election: string;
+  configUrl: string;
+  url: (m: MunRef) => string;
+  code: (uf: string) => number;
+  ab?: (uf: string) => string;
+}
 const KEEPALIVE = 90_000;
 /** No view has asked for anything for this long: the server is free to fetch ahead. */
 const IDLE_AFTER = 45_000;
@@ -232,6 +259,15 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const pad6 = (code: string) => code.padStart(6, '0');
 
 export const municipalOffices = (turn: Turn): Office[] => (Object.keys(OFFICES) as Office[]).filter(o => turn === 1 || o === 'president' || o === 'governor');
+
+/**
+ * O cargo pedido para abrir a rodada de um estado.
+ *
+ * Qualquer um serviria: quem busca é a rodada, e ela cobre os cinco cargos do estado. É o
+ * governador porque ele existe nos dois turnos e é do próprio estado — a presidência é nacional, e
+ * pedir por ela nomearia o país onde se quer nomear um estado.
+ */
+const SEMENTE: Office = 'governor';
 
 /** Reads one per-municipality file: the 2022 layout (abr → cand) or the 2026 EA20-like one (carg → agr → par → cand). */
 export function parseMunicipal(raw: unknown, expected: { election: string; cd: string; office: Office; uf: string }): Row & { sourceAt: string | null } {
@@ -303,6 +339,14 @@ export class MunicipalService {
   private idleJob: Job | null = null;
   private configs = new Map<string, MunRef[]>();
   private rawConfigs = new Map<string, unknown>();
+  /**
+   * Até quando um estado não tem nada a buscar.
+   *
+   * É o que passa a vez para o próximo estado sem perder o da tela: quando a rodada não encontra
+   * cidade suja, o estado fica limpo até o arquivo de andamento poder ser lido de novo — antes
+   * disso não há como descobrir nada novo nele. Vencido o prazo, ele retoma a vez.
+   */
+  private limpoAte = new Map<string, number>();
 
   /**
    * `escala` encolhe as esperas internas do laço, e existe para os testes.
@@ -318,6 +362,34 @@ export class MunicipalService {
 
   private area(office: Office, uf: string) { return office === 'president' ? 'BR' : uf; }
 
+  /**
+   * De qual estado é esta varredura.
+   *
+   * A presidência é nacional e o job dela vale para o país todo; o estado que importa é o que a
+   * tela está olhando, guardado em `focus`. Para os outros cargos os dois são a mesma coisa.
+   */
+  private ufDaRodada(job: Job) { return job.area === 'BR' ? job.focus : job.area; }
+  private chaveDoEstado(job: Job) { return `${job.mode}:${job.turn}:${this.ufDaRodada(job)}`; }
+
+  /**
+   * Um job novo. Existia copiado em três lugares, com os dezoito campos escritos à mão em cada um.
+   *
+   * Um campo acrescentado num lugar e esquecido nos outros é um job que se comporta diferente
+   * conforme quem o criou, e nada aponta para isso.
+   */
+  private criarJob(mode: Mode, turn: Turn, area: string, office: Office, focus: string, lastRequest = Date.now()): Job {
+    const job: Job = {
+      key: `${mode}:${turn}:${area}:${office}`, mode, turn, office, area, focus,
+      status: 'loading', message: 'Preparando os municípios.',
+      muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null,
+      lastRequest, pedidoEm: 0, running: false,
+      stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), mudadasDesde: 0,
+      abSeen: new Set(), fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false,
+    };
+    this.jobs.set(job.key, job);
+    return job;
+  }
+
   async get(mode: Mode, uf: string, turn: Turn, office: Office, since?: number, at?: number): Promise<MunicipalResponse> {
     const area = this.area(office, uf);
     const base = { mode, uf, turn, office, area, sourceAt: null, c: [], m: [], n: {}, loaded: 0, total: 0, version: 0, totais: this.somar(undefined) };
@@ -328,8 +400,7 @@ export class MunicipalService {
     const key = `${mode}:${turn}:${area}:${office}`;
     let job = this.jobs.get(key);
     if (!job) {
-      job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), mudadasDesde: 0, abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
-      this.jobs.set(key, job);
+      job = this.criarJob(mode, turn, area, office, uf);
       await this.loadBuilt(job);
     }
     job.lastRequest = Date.now();
@@ -338,13 +409,11 @@ export class MunicipalService {
     if (mode === 'historico') this.interest.add(`${mode}:${uf}`);
     this.hooks.touch(mode, uf, turn);
     /*
-     * Os outros cargos do estado começam a ser preparados junto, não depois.
+     * Os outros cargos do estado existem desde já, porque a rodada preenche os cinco juntos.
      *
-     * Cada cargo é um arquivo por cidade no TSE, então cada um tem a sua varredura de 853 — e ela
-     * só começava quando alguém abria aquela aba, o que fazia a primeira abertura de cada cargo
-     * esperar cerca de um minuto. Criados agora, eles entram na fila e a própria ordem de
-     * prioridade resolve: o cargo que está na tela leva a faixa inteira, e quando ele fecha a vez
-     * passa sozinha para os irmãos, que chegam prontos.
+     * Cada cargo é um arquivo por cidade no TSE, e cada um tem o seu job — mas quem busca é a
+     * rodada do estado, que baixa os cinco arquivos de cada cidade. Os irmãos precisam existir
+     * antes disso para receberem as linhas.
      */
     this.warmSiblings(mode, uf, turn, office);
     if (!job.running && !(mode === 'historico' && job.status === 'ready')) void this.run(job);
@@ -369,8 +438,7 @@ export class MunicipalService {
       const key = `${mode}:${turn}:${area}:${office}`;
       let job = this.jobs.get(key);
       if (!job) {
-        job = { key, mode, turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: Date.now(), pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), mudadasDesde: 0, abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
-        this.jobs.set(key, job);
+        job = this.criarJob(mode, turn, area, office, uf);
         void this.loadBuilt(job).then(() => { if (!job!.running && job!.status !== 'ready') void this.run(job!); });
         continue;
       }
@@ -422,19 +490,42 @@ export class MunicipalService {
   }
 
   /**
-   * Keeps the live map built while the count runs, for the states the collector already records.
+   * Mantém o mapa municipal montado enquanto a apuração corre, na ordem certa dos estados.
    *
-   * Idle warming used to cover 2022 only, so someone who spent the apuração on another view and
-   * then opened Território started the 853 municipal files from zero, with the count already in
-   * progress. The states here are the ones being recorded anyway, and only while a TSE window is
-   * open; governor is enough to start, because a finished build pulls its sibling offices in.
+   * O aquecimento cobria só 2022, então quem passava a apuração em outra tela e abria o Território
+   * começava as 853 cidades do zero, com a contagem já adiantada. Os estados daqui são os que já
+   * estão sendo gravados de qualquer jeito, e só enquanto uma janela do TSE está aberta.
+   *
+   * Um cargo basta como semente: quem busca é a rodada do estado, e ela cobre os cinco. O que
+   * importa aqui é a **ordem** — o estado que está na tela de alguém primeiro, depois os maiores.
+   * Antes esta função pedia um cargo fixo (`governor`) de cada estado, na ordem em que a janela os
+   * devolvia; medido na janela de 24/09/2026, foi isso que fez a gravação municipal de Minas
+   * começar às 14:00:36 no governador e só às 14:20:19 no estadual — quem reproduzia o começo da
+   * apuração via cidade em um cargo e tabela vazia nos outros quatro.
    */
   private async warmLive() {
-    for (const { mode, uf, turn } of this.hooks.live()) {
+    for (const { mode, uf, turn } of this.contextosPorPrioridade()) {
       if (!this.hooks.allowed(mode)) continue;
-      const office: Office = 'governor';
-      await this.get(mode, uf, turn, office).catch(() => null);
+      await this.get(mode, uf, turn, SEMENTE).catch(() => null);
     }
+  }
+
+  /**
+   * Os contextos ao vivo na ordem em que devem ser buscados: os da tela primeiro, depois por
+   * eleitorado. Sem repetição — um estado que está na tela e também está sendo gravado é um só.
+   */
+  private contextosPorPrioridade(): { mode: Mode; uf: string; turn: Turn }[] {
+    const unicos = new Map<string, { mode: Mode; uf: string; turn: Turn; foco: boolean }>();
+    for (const c of this.hooks.foco()) unicos.set(`${c.mode}:${c.turn}:${c.uf}`, { ...c, foco: true });
+    for (const c of this.hooks.live()) {
+      const chave = `${c.mode}:${c.turn}:${c.uf}`;
+      if (!unicos.has(chave)) unicos.set(chave, { ...c, foco: false });
+    }
+    return [...unicos.values()]
+      .sort((a, b) => Number(b.foco) - Number(a.foco)
+        || this.hooks.eleitorado(b.mode, b.uf, b.turn) - this.hooks.eleitorado(a.mode, a.uf, a.turn)
+        || a.uf.localeCompare(b.uf))
+      .map(({ mode, uf, turn }) => ({ mode, uf, turn }));
   }
 
   /** Frees finished archive jobs nobody has asked for in a while; the file on disk is the copy. */
@@ -461,8 +552,7 @@ export class MunicipalService {
           const key = `historico:${turn}:${area}:${office}`;
           let job = this.jobs.get(key);
           if (!job) {
-            job = { key, mode: 'historico', turn, office, area, focus: uf, status: 'loading', message: 'Preparando os municípios.', muns: [], rows: new Map(), names: new Map(), version: 0, sourceAt: null, lastRequest: 0, pedidoEm: 0, running: false, stamps: new Map(), fetched: new Map(), lidaEm: new Map(), mudadas: new Map(), mudadasDesde: 0, abSeen: new Set(), abRotation: 0, fetches: 0, salvo: { version: -1, em: 0 }, confirmado: false };
-            this.jobs.set(key, job);
+            job = this.criarJob('historico', turn, area, office, uf, 0);
             await this.loadBuilt(job);
           }
           if (job.status !== 'ready') return job;
@@ -807,24 +897,41 @@ export class MunicipalService {
         // A faixa municipal é uma só: quem não é a varredura da vez espera (ver `vezDeVarrer`).
         if (!this.vezDeVarrer(job)) { await this.pausa(2000); continue; }
         if (job.mode !== 'historico') {
-          // Live: read the UF progress file and fetch only the cities whose stamp changed; rotation only as a fallback.
+          // Ao vivo: a rodada do estado lê o andamento e busca os cinco cargos de cada cidade suja.
           if (job.rows.size < job.muns.length) { job.status = 'loading'; job.message = 'Recebendo os resultados por município.'; }
-          const delta = await this.delta(job, target);
-          if (!delta) await this.pass(job, target);
+          const cargos = await this.cargosDoEstado(job);
+          const feito = await this.rodada(job, cargos);
           /*
            * Confirmado quando a fonte respondeu alguma coisa para este job nesta execução.
            *
            * "Respondeu" é ter buscado alguma cidade ou ter lido o andamento de alguma UF. Olhar o
-           * retorno de `delta` não serve: ele devolve 'idle' também quando o andamento veio do
+           * retorno da rodada não serve: ela devolve 'idle' também quando o andamento veio do
            * cache e nenhuma cidade foi considerada — foi assim que o senado se declarou pronto com
            * `fetches=0`, servindo o que tinha vindo do disco.
            */
-          if (job.fetches > 0 || job.abSeen.size > 0) job.confirmado = true;
+          for (const { job: irmao } of cargos) {
+            if (irmao.fetches > 0 || irmao.abSeen.size > 0) irmao.confirmado = true;
+            if (irmao === job) continue;
+            irmao.status = irmao.confirmado && irmao.muns.length && irmao.rows.size >= irmao.muns.length ? 'ready' : irmao.status;
+          }
           job.status = job.confirmado && job.rows.size >= job.muns.length ? 'ready' : 'loading';
           job.message = job.status === 'ready' ? 'Resultados por município recebidos do TSE.' : 'Recebendo os resultados por município.';
-          await this.gravarInstante(job);
-          await this.talvezSalvar(job, job.status === 'ready');
-          await this.pausa(delta === 'idle' ? 3000 : delta ? 500 : 5000);
+          /*
+           * Os cinco cargos gravam o instante da mesma rodada.
+           *
+           * Antes cada cargo gravava por conta própria, quando lhe chegava a vez, e a vez chegava
+           * minutos depois para os últimos: reproduzindo o começo de uma apuração, a tabela de
+           * cidades existia num cargo e vinha vazia nos outros, dizendo que nenhuma cidade havia
+           * publicado. Quem grava junto é quem foi buscado junto.
+           */
+          for (const { job: irmao } of cargos) {
+            await this.gravarInstante(irmao);
+            await this.talvezSalvar(irmao, irmao === job && job.status === 'ready');
+          }
+          // Nada sujo aqui: a vez passa ao próximo estado até o andamento poder dizer algo novo.
+          if (feito === 'idle') this.limpoAte.set(this.chaveDoEstado(job), Date.now() + AB_INTERVAL);
+          else this.limpoAte.delete(this.chaveDoEstado(job));
+          await this.pausa(feito === 'idle' ? 3000 : feito ? 500 : 5000);
           continue;
         }
         const done = await this.pass(job, target);
@@ -964,15 +1071,26 @@ export class MunicipalService {
    * enchia a tabela na tela recebia 1,5 desses 42. Banda não faltava; faltava ordem — ninguém
    * terminava porque todos andavam um pouquinho.
    *
-   * A regra é a mais simples que resolve: quem foi pedido mais recentemente e ainda não fechou leva
-   * a faixa inteira. Os outros esperam. Com 42 req/s, as 853 cidades de um cargo fecham em vinte
-   * segundos, e aí a vez passa sozinha para o próximo — os demais cargos do mesmo estado primeiro,
-   * porque continuam sendo os mais pedidos enquanto o painel está aberto.
+   * Ao vivo o que se escolhe é o **estado**, não o cargo: a rodada busca os cinco cargos de cada
+   * cidade, então não há mais cinco varreduras do mesmo estado para desempatar. A ordem é a pedida:
+   * o estado que está na tela de alguém primeiro e sempre; quando não há mais nada a buscar nele,
+   * os outros, do maior eleitorado para o menor, um por vez.
+   *
+   * Escolher entre cargos era o que produzia o defeito que isto conserta: a vez passava para o
+   * cargo seguinte só quando o anterior fechava, e na janela de 24/09/2026 a gravação municipal de
+   * Minas começou às 14:00:36 no governador, 14:14:15 na presidência, 14:16:21 no senado e
+   * 14:20:19 no estadual. Quem reproduzia o começo da apuração via cidades num cargo e tabela
+   * vazia nos outros quatro.
+   *
+   * No arquivo de 2022 a regra antiga continua: não há andamento para dizer o que mudou, cada
+   * cargo é uma varredura de milhares de arquivos que termina e não volta, e é assim que os
+   * builds são montados um a um.
    */
   private vezDeVarrer(job: Job): boolean {
     const agora = Date.now();
     const vivos = [...this.jobs.values()].filter(j => agora - j.lastRequest <= KEEPALIVE);
     if (!vivos.length) return true;
+    if (job.mode !== 'historico') return this.vezDeVarrerAoVivo(job, vivos.filter(j => j.mode !== 'historico'), agora);
     /*
      * Completo é "não há mais nada a descobrir", não "tenho todas as linhas".
      *
@@ -1008,121 +1126,226 @@ export class MunicipalService {
     return vivos.filter(j => j !== daTela && !completo(j)).sort(maisPedido)[0] === job;
   }
 
-  private async delta(job: Job, target: NonNullable<ReturnType<MunicipalService['target']>>): Promise<boolean | 'idle'> {
-    if (!target.ab) return false;
-    const ufs = [...new Set(job.muns.map(m => m.uf))];
-    const focus = ufs.includes(job.focus) ? job.focus : ufs[0];
-    const others = ufs.filter(u => u !== focus);
+  /**
+   * A vez, ao vivo: qual estado, e quem conduz a rodada dentro dele.
+   *
+   * O estado que está na tela de alguém vem sempre primeiro — nem quando não tem nada a buscar ele
+   * some da fila, porque o prazo de "limpo" vence junto com o intervalo do andamento e ele retoma a
+   * vez. Os outros entram por eleitorado, um por vez, com a folga que o primeiro deixar.
+   */
+  private vezDeVarrerAoVivo(job: Job, vivos: Job[], agora: number): boolean {
+    if (!vivos.length) return true;
+    const naTela = new Set(this.hooks.foco().map(c => `${c.mode}:${c.turn}:${c.uf}`));
+    const estados = new Map<string, Job[]>();
+    for (const j of vivos) {
+      const chave = this.chaveDoEstado(j);
+      const lista = estados.get(chave);
+      if (lista) lista.push(j); else estados.set(chave, [j]);
+    }
+    const ordem = [...estados.keys()].sort((a, b) =>
+      Number(naTela.has(b)) - Number(naTela.has(a))
+      || this.eleitoradoDaChave(b) - this.eleitoradoDaChave(a)
+      || a.localeCompare(b));
+    const daVez = ordem.find(chave => (this.limpoAte.get(chave) ?? 0) <= agora) ?? ordem[0];
+    if (this.chaveDoEstado(job) !== daVez) return false;
+    /*
+     * Dentro do estado, conduz a rodada o cargo que a tela pediu.
+     *
+     * Sem pedido nenhum, conduz sempre o mesmo — a ordem dos cargos é fixa. Um condutor que muda a
+     * cada volta faria duas rodadas do mesmo estado se acharem simultaneamente no direito de andar.
+     */
+    const ordemDeCargo = municipalOffices(job.turn);
+    const lider = [...estados.get(daVez)!].sort((a, b) => b.pedidoEm - a.pedidoEm
+      || ordemDeCargo.indexOf(a.office) - ordemDeCargo.indexOf(b.office))[0];
+    return job === lider;
+  }
+
+  private eleitoradoDaChave(chave: string): number {
+    const [mode, turn, uf] = chave.split(':');
+    return this.hooks.eleitorado(mode as Mode, uf, Number(turn) as Turn);
+  }
+
+  /**
+   * Os cargos de um estado, cada um com o alvo que o TSE publica para a eleição dele.
+   *
+   * São duas eleições para os cinco cargos: a estadual leva governador, senado, federal e estadual
+   * (dá para ver no nosso próprio cache, `municipal/546/` com c0003, c0005, c0006, c0007 e c0008
+   * juntos), e a presidência tem a sua. Logo são dois arquivos de andamento por rodada, não cinco —
+   * e o carimbo é da cidade, não do cargo: se a cidade totalizou, os cinco arquivos dela mudaram.
+   *
+   * O job de cada cargo continua sendo o dono das linhas, do arquivo em disco e da resposta da
+   * tela. A rodada só preenche os cinco.
+   */
+  private async cargosDoEstado(referencia: Job): Promise<{ job: Job; target: Alvo }[]> {
+    const uf = this.ufDaRodada(referencia);
+    const { mode, turn } = referencia;
+    const saida: { job: Job; target: Alvo }[] = [];
+    for (const office of municipalOffices(turn)) {
+      if (mode === 'historico' && turn === 2 && office === 'governor' && !(ARCHIVE.runoffStates as readonly string[]).includes(uf)) continue;
+      const area = this.area(office, uf);
+      let job = this.jobs.get(`${mode}:${turn}:${area}:${office}`);
+      if (!job) { job = this.criarJob(mode, turn, area, office, uf); await this.loadBuilt(job); }
+      // O job da presidência é nacional e é compartilhado: o estado dele é o que a rodada olha.
+      if (job.area === 'BR') job.focus = uf;
+      const target = this.target(job);
+      if (target) saida.push({ job, target });
+    }
+    return saida;
+  }
+
+  /**
+   * Uma rodada do estado: as cidades que mudaram, e os cinco cargos de cada uma.
+   *
+   * Antes cada cargo tinha a sua varredura das 853 cidades e `vezDeVarrer` deixava uma andar por
+   * vez, então os cargos enchiam em fila: medido na janela de 24/09/2026 em Minas, a gravação
+   * municipal começou às 14:00:36 no governador, 14:14:15 na presidência, 14:16:21 no senado e
+   * 14:20:19 no estadual. Quem reproduzia o começo da apuração via cidade num cargo e tabela vazia
+   * nos outros quatro, com a tela dizendo que nenhuma cidade havia publicado — o que era falso: as
+   * cidades estavam publicadas, nós é que ainda não as tínhamos buscado.
+   *
+   * Agora a unidade é a cidade. O total de requisições é o mesmo — o arquivo do TSE é um por cidade
+   * e por cargo, cinco cargos são cinco arquivos, aqui e antes. O que muda é a ordem: a cidade
+   * entra completa nas cinco tabelas, ou não entra.
+   *
+   * Devolve 'idle' quando não havia nada a buscar neste estado agora, o que passa a vez ao próximo.
+   */
+  private async rodada(lider: Job, cargos: { job: Job; target: Alvo }[]): Promise<boolean | 'idle'> {
+    if (!cargos.length) return false;
+    const uf = this.ufDaRodada(lider);
 
     /*
-     * Enquanto o estado que está na tela não fechar, só ele é buscado.
+     * O andamento, um por eleição — não um por cargo.
      *
-     * O arquivo municipal da presidência é nacional: 5.571 municípios. Varrer o país inteiro
-     * enquanto alguém olha um estado gasta a faixa toda enchendo telas que ninguém abriu, e é o
-     * que fazia a tabela de cidades demorar a aparecer mesmo com a coleta funcionando. Os outros
-     * estados entram quando o da tela fecha — que é também quando sobra faixa para eles.
-     *
-     * "O da tela" é sempre o selecionado agora, não o de quando a volta começou: trocar de estado
-     * redireciona a coleta imediatamente (ver a checagem de `job.focus` dentro do trabalhador).
-     *
-     * O andamento dos outros também não é lido nessa fase: é uma requisição por passada que só
-     * serviria para marcar como sujas cidades que não vão ser buscadas agora.
+     * Os quatro cargos estaduais dividem o mesmo arquivo, e é dele que sai o carimbo de cada
+     * cidade. Antes cada cargo lia o seu por conta própria e agia num momento diferente; o mesmo
+     * fato era descoberto quatro vezes.
      */
-    const doFoco = job.muns.filter(m => m.uf === focus);
-    const focoCompleto = doFoco.length > 0 && doFoco.every(m => job.rows.has(m.cdi));
-    const read = focoCompleto && others.length ? [focus, others[job.abRotation++ % others.length]] : [focus];
-    for (const uf of read) {
-      const url = target.ab(uf);
+    const andamentos = new Map<string, { election: string; jobs: Job[] }>();
+    for (const { job, target } of cargos) {
+      const url = target.ab?.(uf);
+      if (!url) continue;
+      const entrada = andamentos.get(url);
+      if (entrada) entrada.jobs.push(job);
+      else andamentos.set(url, { election: target.election, jobs: [job] });
+    }
+    for (const [url, { election, jobs }] of andamentos) {
       const raw = await this.transport.get(url, AB_INTERVAL, { retain: false, timeoutMs: 20_000 });
-      // 304 quer dizer que o andamento deste estado continua valendo, e os carimbos dele já estão
-      // guardados — o estado segue visto. Sem esta linha ele saía de `abSeen` na segunda passada e
-      // as cidades dele paravam de ser consideradas.
-      if (raw === NOT_MODIFIED) { job.abSeen.add(uf); continue; }
+      if (raw === NOT_MODIFIED) {
+        /*
+         * 304 é o andamento deste estado continuando a valer, e os carimbos já estão guardados.
+         * Sem esta linha a UF saía de `abSeen` na segunda passada e as cidades dela paravam de ser
+         * consideradas. O cargo criado depois da primeira leitura copia os carimbos de um irmão:
+         * ele responde 304 sem nunca ter visto o arquivo, e ficaria sem carimbo nenhum.
+         */
+        const comCarimbo = jobs.find(j => j.stamps.size);
+        for (const j of jobs) {
+          j.abSeen.add(uf);
+          if (comCarimbo && j !== comCarimbo && !j.stamps.size) for (const [k, v] of comCarimbo.stamps) j.stamps.set(k, v);
+        }
+        continue;
+      }
       if (!raw) continue;
       try {
-        const ab = parseAb(raw, target.election);
-        for (const [cd, city] of ab.cities) job.stamps.set(`${uf}${cd}`, city);
-        if (ab.sourceAt && (!job.sourceAt || ab.sourceAt > job.sourceAt)) job.sourceAt = ab.sourceAt;
-        job.abSeen.add(uf);
+        const ab = parseAb(raw, election);
+        for (const j of jobs) {
+          for (const [cd, city] of ab.cities) j.stamps.set(`${uf}${cd}`, city);
+          if (ab.sourceAt && (!j.sourceAt || ab.sourceAt > j.sourceAt)) j.sourceAt = ab.sourceAt;
+          j.abSeen.add(uf);
+        }
       } catch (e) { this.transport.reject(url, e instanceof Error ? e.message : 'Andamento inválido'); }
     }
-    if (!job.abSeen.size) return false;
-    const stampOf = (m: MunRef) => job.stamps.get(`${m.uf}${m.cd}`);
+
     /*
-     * Cidade que nunca foi buscada entra sempre; as já buscadas, só quando o carimbo muda.
-     *
-     * A condição exigia `abSeen` para as duas coisas, e `delta` lê o andamento de dois estados por
-     * passada — o em foco e um por rodízio. Os outros nunca entravam, suas cidades nunca eram
-     * consideradas sujas, e como `delta` devolvia 'idle' a varredura completa (`pass`) também não
-     * rodava: a presidência parava em 575 dos 5.571 municípios e ficava ali. A tabela de cidades
-     * abria vazia porque ninguém tinha ido buscar.
-     *
-     * O carimbo continua mandando na releitura, que é o que mantém a conta de requisições baixa
-     * depois que a primeira volta termina.
+     * A lista de cidades do estado. A do próprio estado quando há um cargo estadual carregado;
+     * senão a nacional da presidência, filtrada — é a mesma lista, do mesmo arquivo do TSE.
      */
-    /*
-     * A fonte desempata contra o nosso próprio registro.
-     *
-     * `fetched` diz "já tenho esta cidade neste carimbo" e é o que mantém a contagem de
-     * requisições baixa. Mas quando ele mente, mente para sempre: o carimbo não muda mais, a
-     * cidade nunca é repedida e a linha fica zerada até o fim da apuração.
-     *
-     * Medido na janela de 24/09/2026, às 15h35, no governador de Minas: 218 cidades com seções
-     * totalizadas segundo o andamento e zero votos na nossa tabela, todas marcadas como buscadas
-     * no carimbo corrente. Conferido na fonte, os arquivos delas tinham voto — uma com 4.737 em
-     * 27 de 27 seções.
-     *
-     * Por isso a última condição: se o andamento diz que a cidade tem seção apurada e nós não
-     * temos voto nenhum dela, o nosso registro está errado, e quem manda é a fonte. É uma
-     * contradição interna que se conserta sozinha, e não custa nada enquanto não existe.
-     */
-    const contradiz = (m: MunRef) => (stampOf(m)?.st ?? 0) > 0 && !(job.rows.get(m.cdi)?.vv);
-    const dirty = (focoCompleto ? job.muns : doFoco)
-      .filter(m => !job.rows.has(m.cdi) || job.rows.get(m.cdi)!.esq !== ESQUEMA || contradiz(m)
-        || (job.abSeen.has(m.uf) && stampOf(m) && job.fetched.get(m.cdi) !== stampOf(m)!.stamp))
-      .sort((a, b) => Number(b.uf === focus) - Number(a.uf === focus) || (stampOf(b)?.te || 0) - (stampOf(a)?.te || 0));
-    if (!dirty.length) return 'idle';
-    let i = 0;
+    const doEstado = cargos.find(c => c.job.area === uf && c.job.muns.length)?.job.muns
+      ?? cargos.find(c => c.job.muns.length)?.job.muns.filter(m => m.uf === uf)
+      ?? [];
+    if (!doEstado.length) return false;
+
+    /** Este cargo precisa desta cidade agora? */
+    const precisa = (job: Job, m: MunRef): boolean => {
+      const linha = job.rows.get(m.cdi);
+      const carimbo = job.stamps.get(`${m.uf}${m.cd}`);
+      // Linha que falta, ou lida por um parser mais velho: nenhum carimbo do TSE avisa que quem
+      // mudou fomos nós.
+      if (!linha || linha.esq !== ESQUEMA) return true;
+      // Seção apurada na fonte e nenhum voto aqui é contradição interna, e quem manda é a fonte.
+      if ((carimbo?.st ?? 0) > 0 && !linha.vv) return true;
+      if (this.encerrada(job, m)) return false;
+      // Sem andamento não há carimbo para comparar: cai no ciclo lento, que é o que a varredura
+      // completa fazia antes de existir um arquivo dizendo o que mudou.
+      if (!job.abSeen.has(m.uf)) return Date.now() - (job.lidaEm.get(m.cdi) ?? 0) >= LIVE_CYCLE;
+      return !!carimbo && job.fetched.get(m.cdi) !== carimbo.stamp;
+    };
+
+    const sujas: { m: MunRef; pendentes: { job: Job; target: Alvo }[] }[] = [];
+    for (const m of doEstado) {
+      const pendentes = cargos.filter(c => precisa(c.job, m));
+      if (pendentes.length) sujas.push({ m, pendentes });
+    }
+    if (!sujas.length) return 'idle';
+    // As maiores primeiro: o eleitorado de cada cidade vem do arquivo de andamento.
+    const eleitores = (m: MunRef) => lider.stamps.get(`${m.uf}${m.cd}`)?.te ?? 0;
+    sujas.sort((a, b) => eleitores(b.m) - eleitores(a.m) || a.m.cd.localeCompare(b.m.cd));
+
+    let i = 0, pedidos = 0;
     const worker = async () => {
-      while (i < dirty.length) {
-        const m = dirty[i++];
-        if (Date.now() - job.lastRequest > KEEPALIVE || this.transport.cooldownUntil > Date.now()) return;
+      while (i < sujas.length) {
+        const { m, pendentes } = sujas[i++];
+        if (Date.now() - lider.lastRequest > KEEPALIVE || this.transport.cooldownUntil > Date.now()) return;
         /*
-         * Trocou o estado na tela? Esta volta perdeu a validade.
+         * Trocou o estado na tela? Esta rodada perdeu a validade.
          *
-         * Sem isto, escolher São Paulo no meio de uma varredura de Minas deixava os dezesseis
+         * Sem isto, escolher São Paulo no meio de uma rodada de Minas deixava os dezesseis
          * trabalhadores terminarem as 853 cidades mineiras antes de olhar para São Paulo — minutos
-         * enchendo uma tela que ninguém está mais vendo. A próxima volta já monta a lista do estado
-         * novo, então basta sair daqui.
+         * enchendo uma tela que ninguém está mais vendo. A próxima rodada já monta a lista do
+         * estado novo, então basta sair daqui.
          */
-        if (job.focus !== focus) return;
-        const stamp = stampOf(m)?.stamp ?? '';
-        const url = target.url(m);
+        if (this.ufDaRodada(lider) !== uf) return;
         /*
-         * Uma cidade não é relida mais rápido que o arquivo que anuncia que ela mudou.
+         * Os cinco arquivos da mesma cidade, um atrás do outro.
          *
-         * O intervalo era de 1,5 s, e como o arquivo de andamento só é relido a cada `AB_INTERVAL`
-         * não havia como descobrir nada de novo nesse meio-tempo: sobrava um pedido por cidade a
-         * cada segundo e meio, todos respondendo 304. Amarrar os dois ritmos tira esse desperdício
-         * sem atrasar nada — quando o carimbo muda, a cidade entra na lista da próxima volta.
+         * Em série de propósito: é o que faz a cidade ficar pronta nas cinco tabelas no mesmo
+         * momento, que é a razão de a rodada existir. Os dezesseis trabalhadores dão o paralelismo,
+         * e o teto continua sendo o balde de fichas do transporte.
          */
-        const raw = await this.transport.get(url, AB_INTERVAL, { priority: 'low', retain: false, timeoutMs: 30_000, expectMissing: true });
-        if (raw === null) continue;
-        job.fetches++;
-        if (raw === NOT_MODIFIED) { job.fetched.set(m.cdi, stamp); continue; }
-        try {
-          const row = parseMunicipal(raw, { election: target.election, cd: m.cd, office: job.office, uf: m.uf });
-          this.guardar(job, m.cdi, row);
-          job.fetched.set(m.cdi, stamp);
-          job.lidaEm.set(m.cdi, Date.now());
-        } catch (e) { this.transport.reject(url, e instanceof Error ? e.message : 'Arquivo municipal inválido'); }
+        for (const { job, target } of pendentes) {
+          const carimbo = job.stamps.get(`${m.uf}${m.cd}`)?.stamp ?? '';
+          const url = target.url(m);
+          /*
+           * Uma cidade não é relida mais rápido que o arquivo que anuncia que ela mudou. Sem
+           * andamento, o ritmo é o do ciclo lento — não há o que descobrir a cada oito segundos.
+           */
+          const intervalo = job.abSeen.has(m.uf) ? AB_INTERVAL : LIVE_CYCLE;
+          const raw = await this.transport.get(url, intervalo, { priority: 'low', retain: false, timeoutMs: 30_000, expectMissing: true });
+          if (raw === null) continue;
+          pedidos++;
+          job.fetches++;
+          if (raw === NOT_MODIFIED) { job.fetched.set(m.cdi, carimbo); continue; }
+          try {
+            const row = parseMunicipal(raw, { election: target.election, cd: m.cd, office: job.office, uf: m.uf });
+            this.guardar(job, m.cdi, row);
+            job.fetched.set(m.cdi, carimbo);
+            job.lidaEm.set(m.cdi, Date.now());
+            if (row.sourceAt && (!job.sourceAt || row.sourceAt > job.sourceAt)) job.sourceAt = row.sourceAt;
+          } catch (e) { this.transport.reject(url, e instanceof Error ? e.message : 'Arquivo municipal inválido'); }
+        }
       }
     };
     await Promise.all(Array.from({ length: WORKERS }, worker));
-    return true;
+    /*
+     * Lista suja sem nenhuma requisição de verdade é estado sem nada a buscar agora.
+     *
+     * Acontece quando o que falta está dentro do intervalo do próprio arquivo, ou em espera depois
+     * de um 404 — cidade que ainda não publicou. Sem isto a rodada se declarava ativa sem ter
+     * pedido nada, e o estado da tela ficava com a vez enquanto os outros esperavam por nada.
+     */
+    return pedidos > 0 ? true : 'idle';
   }
 
-  private target(job: Job): { election: string; configUrl: string; url: (m: MunRef) => string; code: (uf: string) => number; ab?: (uf: string) => string } | null {
+  private target(job: Job): Alvo | null {
     const code = (uf: string) => officeCode(job.office, uf);
     if (job.mode === 'historico') {
       const election = archiveElection(job.office, job.turn);
@@ -1235,7 +1458,7 @@ export class MunicipalService {
   }
 
   /** One pass over the municipalities, the viewer's own state first. Returns true when nothing was left to try. */
-  private async pass(job: Job, target: NonNullable<ReturnType<MunicipalService['target']>>): Promise<boolean> {
+  private async pass(job: Job, target: Alvo): Promise<boolean> {
     const order = [...job.muns].sort((a, b) => Number(b.uf === job.focus) - Number(a.uf === job.focus) || Number(b.capital) - Number(a.capital));
     let i = 0, pending = false;
     const interval = job.mode === 'historico' ? ARCHIVE_TTL : LIVE_CYCLE;
@@ -1283,7 +1506,7 @@ export class MunicipalService {
   }
 
   /** 2022 rows already on disk: this service's own cache, or the raw files kept by scripts/territorio-2022.mjs. */
-  private async fromDisk(job: Job, target: NonNullable<ReturnType<MunicipalService['target']>>, m: MunRef): Promise<boolean> {
+  private async fromDisk(job: Job, target: Alvo, m: MunRef): Promise<boolean> {
     const code = target.code(m.uf);
     try {
       const [vv, cand] = JSON.parse(await readFile(this.rowCachePath(target.election, code, m.uf, m.cd), 'utf8')) as [number, [string, number][]];
