@@ -199,7 +199,8 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   fundo.className = 'tbl-fundo';
   fundo.innerHTML = `<div class="tbl-folha" role="dialog" aria-label="${esc(o.nome)}">`
     + `<header><div><div class="t"><i class="pt" style="background:${esc(o.cor)}"></i>${esc(o.nome)}</div>`
-    + `<div class="s">${esc(o.titulo)} · ${esc(o.subtitulo)}</div></div>`
+    + `<div class="s">${esc(o.titulo)} · ${esc(o.subtitulo)}</div>`
+    + `<div class="s espalho"></div></div>`
     + `<input placeholder="Buscar cidade" aria-label="Buscar cidade">`
     + `<button aria-label="Fechar">✕</button></header>`
     + `<div class="estado"></div>`
@@ -220,6 +221,7 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   const corpo = folha.querySelector('tbody')!;
   const estado = folha.querySelector('.estado') as HTMLElement;
   const soma = folha.querySelector('.soma') as HTMLElement;
+  const espalho = folha.querySelector('.espalho') as HTMLElement;
   const mais = folha.querySelector('.mais') as HTMLElement;
 
   type Linha = {
@@ -351,6 +353,17 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     soma.innerHTML = '';
 
     conferencia = '';
+    /*
+     * Quantos votos, e espalhados por quantas cidades.
+     *
+     * O total é o da disputa; as cidades são as que já publicaram voto para esta candidatura. Os
+     * dois números juntos dizem o que a lista sozinha não diz: se aqueles votos vieram de um
+     * punhado de lugares ou de todo canto.
+     */
+    const comVoto = linhas.reduce((t, r) => t + (r.votos > 0 ? 1 : 0), 0);
+    espalho.textContent = comVoto
+      ? `Possui ${fmtInt(o.votos)} votos · distribuídos em ${fmtInt(comVoto)} ${comVoto === 1 ? 'cidade' : 'cidades'}`
+      : '';
     desenhar();
     // Reproduzindo, o instante não anda sozinho: quem repede é o transporte.
     if (!pronto && at == null) relogio = window.setTimeout(carregar, 2500);
@@ -426,6 +439,9 @@ const CSS = `
     font-size: clamp(20px, 2vw, 40px); line-height: 1; letter-spacing: .08em;
     text-transform: uppercase; color: #f6f3ec; }
   .tbl-folha .s { margin-top: .5vh; font-size: clamp(11px, .88vw, 18px); color: #6a6863; }
+  /* A linha de espalhamento e secundaria: mesma familia da subtitulo, um degrau abaixo. */
+  .tbl-folha .espalho:empty { display: none; }
+  .tbl-folha .espalho { margin-top: .35vh; font-size: clamp(10px, .8vw, 16px); color: #55585a; }
   .tbl-folha .s b { color: #b9b6ae; font-weight: 600; }
 
   .tbl-folha input { margin-left: auto; width: min(340px, 30vw); padding: .9vh 1vw;
