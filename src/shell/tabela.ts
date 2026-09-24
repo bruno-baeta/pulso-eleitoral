@@ -259,6 +259,8 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     nome: string; uf: string; busca: string; votos: number; validos: number; pos: number;
     /** Hora em que o TSE publicou esta cidade, e o quanto dela já está totalizado. */
     ht: string; st: number; ts: number;
+    /** Código IBGE: é por ele que se abre a disputa inteira dentro desta cidade. */
+    cdi: string;
   };
   let linhas: Linha[] = [], quantas = 200, relogio = 0, fechada = false, vazio = '', conferencia = '';
 
@@ -266,7 +268,9 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     const q = dobrar(busca.value.trim());
     const lista = linhas.map((r, i) => ({ r, i })).filter(({ r }) => !q || r.busca.includes(q));
     corpo.innerHTML = lista.slice(0, quantas).map(({ r, i }) =>
-      `<tr><td class="n">${i + 1}º</td><td>${esc(r.nome)} <span class="n">(${esc(r.uf)})</span></td>`
+      `<tr><td class="n">${i + 1}º</td>`
+      // O nome abre a disputa inteira dentro daquela cidade: a mesma pergunta pelo outro eixo.
+      + `<td><button class="cidade" data-cdi="${esc(r.cdi)}">${esc(r.nome)}</button> <span class="n">(${esc(r.uf)})</span></td>`
       + `<td class="r">${fmtInt(r.votos)}</td>`
       /*
        * Candidatura com mais votos que os válidos da cidade não rende porcentagem.
@@ -306,8 +310,8 @@ export function abrirCandidato(o: CandidatoOpcoes) {
       status: string; message?: string; loaded?: number; total?: number; cidadesComResultado?: number;
       totais?: { cidades: number; nominais: number; brancos: number; nulos: number; total: number; secoes: number; secoesTotais: number; secoesEstado: number; secoesApuradasEstado: number };
       /** [nome, uf, votos, válidos na cidade, colocação] — já filtrado e ordenado pelo servidor. */
-      /** [nome, uf, votos, válidos, colocação, hora da publicação, seções apuradas, seções da cidade] */
-      linhas: [string, string, number, number, number, string, number, number][];
+      /** [nome, uf, votos, válidos, colocação, hora, seções apuradas, seções da cidade, código IBGE] */
+      linhas: [string, string, number, number, number, string, number, number, string][];
     };
     let d: Municipal | null = null;
     /*
@@ -329,9 +333,9 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     } catch { d = null; }
     if (fechada) return;
     if (!d) { mostrarCarga(0, 0, 'Sem resposta do servidor · tentando de novo'); relogio = window.setTimeout(carregar, 3000); return; }
-    linhas = (d.linhas || []).map(([nome, uf, votos, validos, pos, ht, st, ts]) => {
+    linhas = (d.linhas || []).map(([nome, uf, votos, validos, pos, ht, st, ts, cdi]) => {
       const cidade = titulo(nome);
-      return { nome: cidade, uf, busca: dobrar(cidade), votos, validos, pos, ht, st, ts };
+      return { nome: cidade, uf, busca: dobrar(cidade), votos, validos, pos, ht, st, ts, cdi };
     });
     const pronto = d.status === 'ready';
     /*
@@ -414,6 +418,11 @@ export function abrirCandidato(o: CandidatoOpcoes) {
   folha.querySelector('button')!.addEventListener('click', fechar);
   fundo.addEventListener('click', e => { if (e.target === fundo) fechar(); });
   busca.addEventListener('input', () => { quantas = 200; desenhar(); });
+  corpo.addEventListener('click', e => {
+    const alvo = (e.target as HTMLElement).closest<HTMLElement>('.cidade');
+    if (!alvo?.dataset.cdi) return;
+    abrirCidade({ ...o, cdi: alvo.dataset.cdi });
+  });
   folha.querySelector('.rolo')!.addEventListener('scroll', e => {
     const t = e.target as HTMLElement;
     if (t.scrollTop + t.clientHeight > t.scrollHeight - 300 && mais.textContent) { quantas += 200; desenhar(); }
@@ -442,6 +451,103 @@ export function abrirCandidato(o: CandidatoOpcoes) {
     },
     aberta: () => fundo.isConnected,
   };
+}
+
+/**
+ * A disputa inteira dentro de uma cidade.
+ *
+ * É a folha de cidades lida pelo outro eixo: em vez de "onde esta candidatura teve votos", ela
+ * responde "como ficou a disputa aqui" — que é como se lê um resultado municipal, e o que deixa
+ * ver a colocação de cada um naquele lugar.
+ */
+export function abrirCidade(o: CandidatoOpcoes & { cdi: string }) {
+  montarCss();
+  document.querySelector('.tbl-fundo')?.remove();
+
+  const fundo = document.createElement('div');
+  fundo.className = 'tbl-fundo';
+  fundo.innerHTML = `<div class="tbl-folha" role="dialog" aria-label="Resultado do município">`
+    + `<header><div><div class="t"></div><div class="s"></div><div class="s espalho"></div></div>`
+    + `<input placeholder="Buscar candidatura" aria-label="Buscar candidatura">`
+    + `<button aria-label="Fechar">✕</button></header>`
+    + `<div class="estado"></div>`
+    + `<div class="carga" hidden><div class="trilho"><i></i></div><span></span></div>`
+    + `<div class="rolo"><table><colgroup><col style="width:8%"><col style="width:38%">`
+    + `<col style="width:13%"><col style="width:16%"><col style="width:13%"><col style="width:12%">`
+    + `</colgroup><thead><tr><th>#</th><th>Candidatura</th><th>Número</th><th>Partido</th>`
+    + `<th class="r">Votos</th><th class="r">% válidos</th></tr></thead><tbody></tbody></table></div>`
+    + `<div class="mais"></div>`
+    + `</div>`;
+
+  const folha = fundo.querySelector('.tbl-folha')!;
+  const busca = folha.querySelector('input')!;
+  const corpo = folha.querySelector('tbody')!;
+  const estado = folha.querySelector('.estado') as HTMLElement;
+  const carga = folha.querySelector('.carga') as HTMLElement;
+  const rolo = folha.querySelector('.rolo') as HTMLElement;
+  const mais = folha.querySelector('.mais') as HTMLElement;
+
+  type Cidade = {
+    status: string; message: string; nome: string; uf: string;
+    vv: number; vb: number; vn: number; tv: number; ht: string; st: number; ts: number;
+    candidaturas: [string, string, string, string, number][];
+  };
+  let dados: Cidade | null = null, fechada = false, relogio = 0;
+
+  const desenhar = () => {
+    if (!dados) return;
+    const q = dobrar(busca.value.trim());
+    const lista = dados.candidaturas
+      .map((c, i) => ({ c, pos: i + 1 }))
+      .filter(({ c }) => !q || dobrar(`${c[1]} ${c[0]} ${c[2]}`).includes(q));
+    corpo.innerHTML = lista.map(({ c, pos }) => {
+      const [numero, nome, partido, cor, votos] = c;
+      return `<tr><td class="n">${pos}º</td>`
+        + `<td><span class="cor" style="background:${esc(cor)}"></span>${esc(nome)}</td>`
+        + `<td>${esc(numero)}</td><td>${esc(partido)}</td>`
+        + `<td class="r">${fmtInt(votos)}</td>`
+        + `<td class="r">${dados!.vv ? fmtPct(votos / dados!.vv * 100, 2) : '<span class="n">—</span>'}</td></tr>`;
+    }).join('') || `<tr><td colspan="6" class="n">Nenhuma candidatura encontrada.</td></tr>`;
+    mais.textContent = dados.vv
+      ? `${fmtInt(dados.vv)} votos válidos · ${fmtInt(dados.vb)} brancos · ${fmtInt(dados.vn)} nulos`
+      : '';
+  };
+
+  const carregar = async () => {
+    if (fechada) return;
+    let d: Cidade | null = null;
+    const at = o.momento?.();
+    try {
+      const r = await fetch(`/api/municipal?mode=${o.mode}&uf=${o.uf}&turn=${o.turn}&office=${o.office}&cidade=${encodeURIComponent(o.cdi)}${at == null ? '' : `&at=${Math.round(at)}`}`, { cache: 'no-store' });
+      d = r.ok ? await r.json() as Cidade : null;
+    } catch { d = null; }
+    if (fechada) return;
+    if (!d) { relogio = window.setTimeout(carregar, 3000); return; }
+    dados = d;
+    carga.hidden = true; rolo.hidden = false;
+    folha.querySelector('.t')!.textContent = d.nome ? `${titulo(d.nome)} (${d.uf})` : 'Município';
+    folha.querySelector('.s')!.textContent = `${o.titulo}${d.ts ? ` · ${fmtPct(d.st / d.ts * 100, 1)} das seções da cidade` : ''}${d.ht ? ` · atualizado às ${d.ht.slice(0, 5)}` : ''}`;
+    folha.querySelector('.espalho')!.textContent = d.candidaturas.length
+      ? `${fmtInt(d.candidaturas.length)} candidaturas com voto aqui`
+      : '';
+    estado.textContent = d.candidaturas.length ? '' : (d.message || 'Esta cidade ainda não publicou resultado.');
+    desenhar();
+    if (at == null && d.status !== 'ready') relogio = window.setTimeout(carregar, 3000);
+  };
+
+  const fechar = () => { fechada = true; clearTimeout(relogio); fundo.remove(); removeEventListener('keydown', naTecla); };
+  const naTecla = (e: KeyboardEvent) => { if (e.key === 'Escape') fechar(); };
+  addEventListener('keydown', naTecla);
+  folha.querySelector('header button')!.addEventListener('click', fechar);
+  fundo.addEventListener('click', e => { if (e.target === fundo) fechar(); });
+  busca.addEventListener('input', desenhar);
+
+  document.body.appendChild(fundo);
+  carga.hidden = false; rolo.hidden = true;
+  carga.classList.add('indefinida');
+  (folha.querySelector('.carga span') as HTMLElement).textContent = 'Buscando o resultado desta cidade';
+  void carregar();
+  return { recarregar: () => { if (!fechada) void carregar(); }, aberta: () => fundo.isConnected };
 }
 
 const titulo = titleCase;
@@ -553,6 +659,10 @@ const CSS = `
   .tbl-folha .estado:not(:empty) { padding: 1.2vh 2.2vw; font-size: clamp(10px, .78vw, 15px);
     color: #6a6863; border-bottom: 1px solid #141817; }
   .tbl-folha .pos { color: #b9b6ae; }
+  /* O nome da cidade e clicavel: herda o texto da celula e so muda no hover. */
+  .tbl-folha .cidade { background: none; border: 0; padding: 0; font: inherit; color: inherit;
+    cursor: pointer; text-align: left; }
+  .tbl-folha .cidade:hover, .tbl-folha .cidade:focus-visible { color: #f6f3ec; text-decoration: underline; }
   .tbl-folha .mais, .tbl-folha .pe { padding: 1.4vh 2.2vw; border-top: 1px solid #201f1d;
     min-height: 1.2em;
     font-size: clamp(9px, .72vw, 14px); color: #4f544f; }

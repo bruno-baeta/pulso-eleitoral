@@ -115,8 +115,28 @@ export interface CandidaturaMunicipal {
    */
   totais: TotaisMunicipais;
   numero: string;
-  /** [nome, uf, votos, válidos na cidade, colocação, hora da publicação, seções apuradas, seções da cidade] */
-  linhas: [string, string, number, number, number, string, number, number][];
+  /** [nome, uf, votos, válidos, colocação, hora, seções apuradas, seções da cidade, código IBGE] */
+  linhas: [string, string, number, number, number, string, number, number, string][];
+}
+
+/**
+ * Uma disputa dentro de uma cidade: quem teve quantos votos ali.
+ *
+ * É a outra direção da mesma pergunta. A folha de cidades diz onde uma candidatura foi votada;
+ * esta diz, dentro de um lugar, como a disputa ficou — que é como se lê um resultado municipal de
+ * verdade, e o que permite ver a colocação de cada um naquela cidade.
+ */
+export interface CidadeMunicipal {
+  status: MunicipalPayload['status'];
+  message: string;
+  /** Vazio quando esta cidade ainda não publicou nada. */
+  nome: string;
+  uf: string;
+  /** Válidos, brancos, nulos e total da cidade, e o andamento dela — tudo publicado pelo TSE. */
+  vv: number; vb: number; vn: number; tv: number;
+  ht: string; st: number; ts: number;
+  /** [número, nome, partido, cor, votos] — já em ordem de votação. */
+  candidaturas: [string, string, string, string, number][];
 }
 
 interface MunRef { uf: string; cd: string; cdi: string; nm: string; capital: boolean }
@@ -873,7 +893,7 @@ export class MunicipalService {
         }
       }
       const c = porCdi.get(cdi);
-      linhas.push([nome, ufCidade, votos, validos, pos, c?.ht ?? '', c?.st ?? 0, c?.ts ?? 0]);
+      linhas.push([nome, ufCidade, votos, validos, pos, c?.ht ?? '', c?.st ?? 0, c?.ts ?? 0, cdi]);
     }
     linhas.sort((a, b) => b[2] - a[2] || a[0].localeCompare(b[0], 'pt-BR'));
     const cidadesComResultado = bruto.m.reduce((t, [, , , vv]) => t + (vv > 0 ? 1 : 0), 0);
@@ -892,6 +912,47 @@ export class MunicipalService {
      */
     const totais = bruto.totais;
     return { status: bruto.status, message: bruto.message, loaded: bruto.loaded, total: bruto.total, cidadesComResultado, totais, numero, linhas };
+  }
+
+  /**
+   * A disputa dentro de uma cidade.
+   *
+   * Os votos por candidatura daquele município já estão guardados — é o mesmo dado que alimenta a
+   * folha de cidades, lido pelo outro eixo. Os nomes vêm da corrida, que é quem os tem; número
+   * sem nome aparece pelo número, porque some-lo seria esconder voto que o TSE publicou.
+   */
+  async porCidade(mode: Mode, uf: string, turn: Turn, office: Office, cdi: string, at?: number): Promise<CidadeMunicipal> {
+    const vazio: CidadeMunicipal = {
+      status: 'loading', message: '', nome: '', uf: '', vv: 0, vb: 0, vn: 0, tv: 0,
+      ht: '', st: 0, ts: 0, candidaturas: [],
+    };
+    const bruto = await this.get(mode, uf, turn, office, undefined, at);
+    if ('unchanged' in bruto) return { ...vazio, status: bruto.status, message: bruto.message };
+
+    const linha = bruto.m.find(m => m[0] === cdi);
+    if (!linha) return { ...vazio, status: bruto.status, message: 'Esta cidade ainda não publicou resultado.' };
+    const [, nome, ufCidade, vv, pares, ht] = linha;
+
+    const race = this.hooks.race(mode, uf, turn, office);
+    const porNumero = new Map((race?.candidates ?? []).map(c => [c.number, c]));
+    const candidaturas: CidadeMunicipal['candidaturas'] = [];
+    for (let k = 0; k < pares.length; k += 2) {
+      const numero = bruto.c[pares[k]]?.[0] ?? '';
+      const c = porNumero.get(numero);
+      candidaturas.push([numero, c?.name ?? numero, c?.party ?? '', c?.color ?? '#8a94a6', pares[k + 1]]);
+    }
+    candidaturas.sort((a, b) => b[4] - a[4]);
+
+    const job = this.jobs.get(`${mode}:${turn}:${this.area(office, uf)}:${office}`);
+    const r = job?.rows.get(cdi);
+    const m = job?.muns.find(x => x.cdi === cdi);
+    const carimbo = m && job?.stamps.get(`${m.uf}${m.cd}`);
+    return {
+      status: bruto.status, message: '', nome, uf: ufCidade, vv,
+      vb: r?.vb ?? 0, vn: r?.vn ?? 0, tv: r?.tv ?? 0,
+      ht: carimbo?.ht ?? ht ?? '', st: carimbo?.st ?? 0, ts: carimbo?.ts ?? 0,
+      candidaturas,
+    };
   }
 
   /**

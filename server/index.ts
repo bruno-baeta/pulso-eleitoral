@@ -83,12 +83,14 @@ const municipalSchema = { type: 'object', properties: {
   office: { type: 'string', enum: ['president', 'governor', 'senate', 'federal', 'state'] },
   v: { type: 'integer', minimum: 0 },
   numero: { type: 'string', pattern: '^\\d{1,5}$' },
+  // `cidade` é o código IBGE de sete dígitos: a disputa inteira dentro daquele município.
+  cidade: { type: 'string', pattern: '^\\d{7}$' },
   // `at` é o instante reproduzido: a tabela vem da gravação daquele momento, não do estado de agora.
   at: { type: 'integer', minimum: 0 },
 }, required: ['office'], additionalProperties: false };
 /** Território: results per municipality for one UF + office, fetched on demand (see server/municipal.ts). */
-app.get<{ Querystring: { mode: Mode; uf: string; turn: Turn; office: Office; v?: number; numero?: string; at?: number } }>('/api/municipal', { schema: { querystring: municipalSchema } }, async (request, reply) => {
-  const { mode, uf, turn, office, v, numero, at } = request.query;
+app.get<{ Querystring: { mode: Mode; uf: string; turn: Turn; office: Office; v?: number; numero?: string; cidade?: string; at?: number } }>('/api/municipal', { schema: { querystring: municipalSchema } }, async (request, reply) => {
+  const { mode, uf, turn, office, v, numero, cidade, at } = request.query;
   /*
    * Com `numero`, só as cidades daquela candidatura — e só o que a folha desenha.
    *
@@ -96,6 +98,11 @@ app.get<{ Querystring: { mode: Mode; uf: string; turn: Turn; office: Office; v?:
    * na presidência, com todos os outros candidatos de todas as cidades indo junto para serem
    * descartados no navegador. Pela rede de casa isso é o meio segundo entre clicar e ver.
    */
+  if (cidade) {
+    // A disputa inteira dentro de um município: o mesmo dado lido pelo outro eixo.
+    reply.header('Cache-Control', 'no-store');
+    return municipal.porCidade(mode, uf, turn, office, cidade, at);
+  }
   if (numero) {
     reply.header('Cache-Control', 'no-store');
     return municipal.porCandidatura(mode, uf, turn, office, numero, at);
