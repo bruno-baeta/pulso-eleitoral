@@ -469,3 +469,42 @@ test('um instante anterior a qualquer gravação devolve tabela vazia, não a de
     assert.equal(vazio?.nominais, 0);
   } finally { transporte.close(); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
+
+test('cidade que o andamento diz apurada e nós temos zerada é rebuscada', async () => {
+  /*
+   * O defeito que travou a janela de 24/09/2026.
+   *
+   * `fetched` diz "já tenho esta cidade neste carimbo" e é o que mantém a contagem de requisições
+   * baixa. Quando ele mente, mente para sempre: o carimbo não muda mais, a cidade nunca é
+   * repedida e a linha fica zerada até o fim. Medido às 15h35 no governador de Minas: 218 cidades
+   * com seções totalizadas segundo o andamento e zero votos na nossa tabela, todas marcadas como
+   * buscadas no carimbo corrente. Os arquivos delas na fonte tinham voto.
+   *
+   * A regra nova é de desempate: seção apurada na fonte e nenhum voto aqui é contradição interna,
+   * e quem manda é a fonte.
+   */
+  const dir = await mkdtemp(join(tmpdir(), 'pulso-mun-'));
+  const tse = tseComTotais(5, { encerradas: true });
+  try {
+    // O disco afirma que as cinco foram buscadas no carimbo atual — e traz as cinco zeradas.
+    const carimbo = '17/09/2026 10:45:45|56|f';
+    const gravado = {
+      c: [['83', 0], ['89', 0]],
+      m: Array.from({ length: 5 }, (_, i) => [`31${String(i).padStart(5, '0')}`, `CIDADE MG${i}`, 'MG', 0, []]),
+      t: Array.from({ length: 5 }, () => [0, 0, 0, 0, 0, 2]),
+      k: Array.from({ length: 5 }, (_, i) => [`MG${40000 + i}`, carimbo, '10:45:45', 56, 1, 56, 56]),
+      b: Array.from({ length: 5 }, (_, i) => [`31${String(i).padStart(5, '0')}`, carimbo]),
+    };
+    await mkdir(join(dir, 'municipal', 'simulado', 'sessao-de-teste'), { recursive: true });
+    await writeFile(join(dir, 'municipal', 'simulado', 'sessao-de-teste', 't1-mg-governor.json'), JSON.stringify(gravado));
+
+    const transporte = new TseTransport(500, tse.fetch);
+    try {
+      const s = new MunicipalService(transporte, hooks(), dir, 0.01);
+      const t = totaisDe(await ateFechar(s, 'simulado', 'MG', 1, 'governor'));
+      assert.equal(t?.cidades, 5, 'as cinco voltaram a ter voto');
+      assert.equal(t?.nominais, 5 * 150, 'com os votos que a fonte publica');
+      await s.encerrar();
+    } finally { transporte.close(); }
+  } finally { await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});

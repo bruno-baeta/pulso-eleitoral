@@ -973,7 +973,22 @@ export class MunicipalService {
     const agora = Date.now();
     const vivos = [...this.jobs.values()].filter(j => agora - j.lastRequest <= KEEPALIVE);
     if (!vivos.length) return true;
-    const completo = (j: Job) => j.confirmado && !!j.muns.length && j.rows.size >= j.muns.length;
+    /*
+     * Completo é "não há mais nada a descobrir", não "tenho todas as linhas".
+     *
+     * A regra era `rows.size >= muns.length`. Isso valia enquanto um job nascia vazio e ia
+     * enchendo — mas desde que as linhas passaram a ser gravadas em disco, todo job nasce com as
+     * 853 cidades e portanto nasce "completo": some da rodada de fundo para sempre e só o cargo da
+     * tela continua andando. Medido na janela de 24/09/2026, às 15h24: o federal de Minas com
+     * fetches=1286 e 703 cidades apuradas, igual ao TSE, enquanto governador e senado do mesmo
+     * estado estavam em fetches=0, congelados às 14h47 com 201 e 229 cidades.
+     *
+     * Quem diz que acabou é o TSE, pelo `and='f'` de cada município — que é o que `encerrada` já
+     * sabe ler. O `every` sai na primeira cidade em aberto, então no meio da apuração isto custa
+     * uma comparação.
+     */
+    const completo = (j: Job) => j.confirmado && !!j.muns.length && j.rows.size >= j.muns.length
+      && j.muns.every(m => this.encerrada(j, m));
     const maisPedido = (a: Job, b: Job) => b.pedidoEm - a.pedidoEm;
 
     /*
@@ -1045,8 +1060,25 @@ export class MunicipalService {
      * O carimbo continua mandando na releitura, que é o que mantém a conta de requisições baixa
      * depois que a primeira volta termina.
      */
+    /*
+     * A fonte desempata contra o nosso próprio registro.
+     *
+     * `fetched` diz "já tenho esta cidade neste carimbo" e é o que mantém a contagem de
+     * requisições baixa. Mas quando ele mente, mente para sempre: o carimbo não muda mais, a
+     * cidade nunca é repedida e a linha fica zerada até o fim da apuração.
+     *
+     * Medido na janela de 24/09/2026, às 15h35, no governador de Minas: 218 cidades com seções
+     * totalizadas segundo o andamento e zero votos na nossa tabela, todas marcadas como buscadas
+     * no carimbo corrente. Conferido na fonte, os arquivos delas tinham voto — uma com 4.737 em
+     * 27 de 27 seções.
+     *
+     * Por isso a última condição: se o andamento diz que a cidade tem seção apurada e nós não
+     * temos voto nenhum dela, o nosso registro está errado, e quem manda é a fonte. É uma
+     * contradição interna que se conserta sozinha, e não custa nada enquanto não existe.
+     */
+    const contradiz = (m: MunRef) => (stampOf(m)?.st ?? 0) > 0 && !(job.rows.get(m.cdi)?.vv);
     const dirty = (focoCompleto ? job.muns : doFoco)
-      .filter(m => !job.rows.has(m.cdi) || job.rows.get(m.cdi)!.esq !== ESQUEMA
+      .filter(m => !job.rows.has(m.cdi) || job.rows.get(m.cdi)!.esq !== ESQUEMA || contradiz(m)
         || (job.abSeen.has(m.uf) && stampOf(m) && job.fetched.get(m.cdi) !== stampOf(m)!.stamp))
       .sort((a, b) => Number(b.uf === focus) - Number(a.uf === focus) || (stampOf(b)?.te || 0) - (stampOf(a)?.te || 0));
     if (!dirty.length) return 'idle';
@@ -1197,6 +1229,8 @@ export class MunicipalService {
      * momento em que paramos de olhar.
      */
     if (!linha || linha.esq !== ESQUEMA) return false;
+    // Seção apurada na fonte e nenhum voto aqui é contradição: não há como isto estar encerrado.
+    if (carimbo.st > 0 && !linha.vv) return false;
     return Date.now() - (job.lidaEm.get(m.cdi) ?? 0) < RELEITURA;
   }
 
