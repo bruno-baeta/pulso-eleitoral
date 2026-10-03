@@ -26,6 +26,7 @@ import { publishedStatus } from '../../domain/derive';
 import { abrirCandidato, abrirTabela } from '../../shell/tabela';
 import { fitaHtml, montarTransporte } from './fita';
 import { bancadasDe } from './bancadas';
+import { espera, relogioDeContagem, type Espera } from './espera';
 import { abrirBancadas } from './bancada';
 import { CSS } from './style';
 
@@ -171,8 +172,17 @@ let presidenteNoEstado: { numero: string; nome: string; partido: string; cor: st
  * "Aguardando o TSE" é verdade quando a apuração ainda não começou, e mentira quando o leitor
  * acabou de trocar de estado: aí o que falta é o arquivo daquele estado chegar, o que leva
  * segundos. Dizer o nome do estado transforma um alarme em um aviso de carregamento.
+ *
+ * Mas "Carregando" só enquanto a resposta não veio. Com o snapshot já em mãos e a disputa ausente,
+ * não há nada a caminho — no replay de 2022 isso é dado que não foi gravado, e o painel dizia
+ * "Carregando" para sempre.
  */
-const esperando = () => `Carregando ${esc(stateName(UF))}…`;
+const esperando = () => {
+  if (!snap) return `Carregando ${esc(stateName(UF))}…`;
+  return MODE === 'historico' ? `Sem dados de 2022 em ${esc(stateName(UF))}` : `Sem dados de ${esc(stateName(UF))}`;
+};
+/** O rodapé sem número: no replay de 2022 não há o que aguardar do TSE. */
+const semNumero = () => (MODE === 'historico' ? '—' : 'Aguardando o TSE');
 
 /* ── as disputas majoritárias: quem está na frente, e por quanto ───────────────────────── */
 
@@ -265,7 +275,7 @@ function presidenciaNoEstado(race: Race | undefined): string {
 
 /** A frase que diz o que decide aquela disputa — e ela é diferente em cada uma. */
 function decide(office: Office, race: Race | undefined): string {
-  if (!race?.candidates.length) return 'Aguardando o TSE';
+  if (!race?.candidates.length) return semNumero();
   const ord = [...race.candidates].sort((a, b) => b.votes - a.votes);
   if (office === 'president' || office === 'governor') {
     /*
@@ -405,6 +415,7 @@ async function main() {
           : '')
         + `<span class="ap">—</span></header>`
         + `<div class="corpo"></div><p class="decide">—</p></section>`).join('')}</div>`
+    + `<div class="espera" hidden></div>`
     + `<div class="cadeiras">${CADEIRAS.map(c =>
         `<section data-c="${c.key}"><header><h2><button class="tudo">${esc(c.nome)}</button></h2>`
         + `<button class="cads" title="Cadeiras por partido">Cadeiras</button>`
@@ -465,7 +476,33 @@ async function main() {
     }
   };
 
+  /*
+   * A espera antes do primeiro número: um bloco no centro com a hora marcada, no lugar dos cinco
+   * painéis vazios. Sai sozinha quando a primeira seção apurada chega (ver espera.ts).
+   */
+  const esperaAgora = (): Espera => espera({
+    oficial: MODE === 'official',
+    reproduzindo: momento !== null,
+    turno: TURN,
+    temApuracao: Object.values(snap?.races ?? {}).some(r => (r?.countedPercent ?? 0) > 0),
+  });
+  const pintarEspera = (e: Espera) => {
+    palco.classList.toggle('esperando', !!e);
+    const bloco = palco.querySelector<HTMLElement>('.espera')!;
+    bloco.hidden = !e;
+    if (!e) return;
+    const dia = new Date(e.inicio).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: 'numeric', month: 'long' });
+    const hora = new Date(e.inicio).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit' }).replace(/^0/, '');
+    const titulo = `<p class="e-turno">Apuração do ${TURN}º turno</p>`;
+    bloco.innerHTML = e.fase === 'antes'
+      ? `${titulo}<p class="e-quando">${esc(dia)}, ${esc(hora)}h</p><p class="e-conta">${relogioDeContagem(e.faltam)}</p>`
+      : `${titulo}<p class="e-quando">Buscando os primeiros resultados no TSE</p><div class="e-barra"><i></i></div>`;
+  };
+  // A contagem anda de segundo em segundo; fora da espera o intervalo não faz nada.
+  setInterval(() => { if (palco.classList.contains('esperando')) pintarEspera(esperaAgora()); }, 1000);
+
   const desenhar = () => {
+    pintarEspera(esperaAgora());
     const antes = medirPosicoes();
     for (const { key } of CORRIDAS) {
       const secao = palco.querySelector<HTMLElement>(`.corridas section[data-c="${key}"]`)!;
@@ -503,7 +540,7 @@ async function main() {
       secao.querySelector('.decide')!.innerHTML = race
         ? `${qe ? `Cada cadeira custa <b>${fmtInt(qe)}</b> votos` : `${race.seats} vagas em disputa`}`
           + `${faltam ? ` · <b>${faltam}</b> ${faltam === 1 ? 'vaga ainda em aberto' : 'vagas ainda em aberto'}` : ''}`
-        : 'Aguardando o TSE';
+        : semNumero();
       secao.querySelector('.corpo')!.innerHTML = cadeiras(key, race);
     }
     /*

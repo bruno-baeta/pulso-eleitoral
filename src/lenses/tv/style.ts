@@ -90,6 +90,23 @@ export const CSS = `
 
   /* ── as seções: separadas por fio, nunca por moldura ───────────────────────────────── */
   .corridas, .cadeiras { display: grid; min-height: 0; }
+  /* a espera ocupa as duas linhas dos painéis, que saem de cena até o primeiro número */
+  .noite.esperando .corridas, .noite.esperando .cadeiras { display: none; }
+  .espera { grid-row: 1 / span 2; display: grid; place-content: center; justify-items: center;
+    gap: 1.6vh; text-align: center; min-height: 0; }
+  .espera[hidden] { display: none; }
+  .espera p { margin: 0; }
+  .espera .e-turno { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; letter-spacing: .22em;
+    text-transform: uppercase; font-size: clamp(14px, 1.4vw, 26px); color: #cdc9c1; }
+  .espera .e-quando { font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+    font-size: clamp(28px, 3.6vw, 68px); color: #f6f3ec; line-height: 1.05; }
+  .espera .e-conta { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; color: #e8c877;
+    font-size: clamp(56px, 9vw, 180px); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+  .espera .e-barra { width: min(46vw, 640px); height: 6px; border-radius: 3px; background: #1c211f; overflow: hidden; }
+  .espera .e-barra i { display: block; width: 30%; height: 100%; border-radius: 3px; background: #e8c877;
+    animation: e-busca 1.6s ease-in-out infinite; }
+  @keyframes e-busca { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  @media (prefers-reduced-motion: reduce) { .espera .e-barra i { animation: none; width: 100%; opacity: .5; } }
   .corridas { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .cadeiras { grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 2px solid #1c211f; }
   /* o respiro entre o título e o conteúdo: colados, o cabeçalho parecia parte da lista */
