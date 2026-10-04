@@ -484,7 +484,9 @@ async function main() {
     oficial: MODE === 'official',
     reproduzindo: momento !== null,
     turno: TURN,
-    temApuracao: Object.values(snap?.races ?? {}).some(r => (r?.countedPercent ?? 0) > 0),
+    // O arquivo do estado anda antes do nacional: em 4/10 Minas tinha 0,08% com o Brasil em 0, e a
+    // espera cobria o centro com números já no rodapé. Qualquer apuração, de qualquer arquivo, encerra.
+    temApuracao: [...Object.values(snap?.races ?? {}), snap?.presidentUf].some(r => (r?.countedPercent ?? 0) > 0),
   });
   const pintarEspera = (e: Espera) => {
     palco.classList.toggle('esperando', !!e);
